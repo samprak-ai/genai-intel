@@ -1,0 +1,188 @@
+/**
+ * Typed API client — wraps fetch calls to the FastAPI backend.
+ * All functions throw on non-2xx responses.
+ */
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API ${res.status}: ${text}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface StartupRow {
+  id: string;
+  canonical_name: string;
+  website: string;
+  industry?: string;
+  description?: string;
+  lead_investors?: string[];
+  founder_background?: string[];
+  // Cloud
+  cloud_is_multi?: boolean;
+  cloud_primary_provider?: string;
+  cloud_providers?: string[];
+  cloud_confidence?: number;
+  cloud_entrenchment?: string;
+  cloud_evidence_count?: number;
+  cloud_not_applicable?: boolean;
+  cloud_not_applicable_note?: string;
+  // AI
+  ai_is_multi?: boolean;
+  ai_primary_provider?: string;
+  ai_providers?: string[];
+  ai_confidence?: number;
+  ai_entrenchment?: string;
+  ai_evidence_count?: number;
+  ai_not_applicable?: boolean;
+  ai_not_applicable_note?: string;
+  snapshot_date?: string;
+}
+
+export interface Signal {
+  id: string;
+  provider_type: "cloud" | "ai";
+  provider_name: string;
+  signal_source: string;
+  signal_strength: "STRONG" | "MEDIUM" | "WEAK";
+  evidence_text?: string;
+  evidence_url?: string;
+  confidence_weight: number;
+  collected_at: string;
+}
+
+export interface PipelineRun {
+  id: string;
+  run_date: string;
+  status: "running" | "completed" | "failed";
+  startups_discovered: number;
+  startups_attributed: number;
+  errors_count: number;
+  execution_time_seconds?: number;
+  started_at: string;
+  completed_at?: string;
+}
+
+export interface ProviderDistribution {
+  provider: string;
+  startup_count: number;
+  multi_cloud_count: number;
+  sole_provider_count: number;
+  avg_confidence: number;
+}
+
+export interface Summary {
+  total_companies: number;
+  cloud_distribution: ProviderDistribution[];
+  ai_distribution: ProviderDistribution[];
+  latest_run?: PipelineRun;
+}
+
+// ---------------------------------------------------------------------------
+// Startups
+// ---------------------------------------------------------------------------
+
+export const getStartups = (params?: {
+  cloud_provider?: string;
+  ai_provider?: string;
+  search?: string;
+  page?: number;
+  per_page?: number;
+}) => {
+  const qs = new URLSearchParams();
+  if (params?.cloud_provider) qs.set("cloud_provider", params.cloud_provider);
+  if (params?.ai_provider) qs.set("ai_provider", params.ai_provider);
+  if (params?.search) qs.set("search", params.search);
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.per_page) qs.set("per_page", String(params.per_page));
+  const query = qs.toString() ? `?${qs}` : "";
+  return apiFetch<StartupRow[]>(`/api/startups${query}`);
+};
+
+export const getStartup = (id: string) =>
+  apiFetch<{
+    startup: StartupRow;
+    snapshot: Record<string, unknown> | null;
+    signals: Signal[];
+    funding_events: Record<string, unknown>[];
+    manual_override: Record<string, unknown> | null;
+    snapshot_history: Record<string, unknown>[];
+  }>(`/api/startups/${id}`);
+
+export const createStartup = (body: {
+  company_name: string;
+  website: string;
+  evidence_urls?: string[];
+  lead_investors?: string[];
+  founder_background?: string[];
+  notes?: string;
+}) => apiFetch<{ startup: StartupRow }>(`/api/startups`, {
+  method: "POST",
+  body: JSON.stringify(body),
+});
+
+export const patchStartup = (
+  id: string,
+  body: {
+    evidence_urls?: string[];
+    lead_investors?: string[];
+    founder_background?: string[];
+    notes?: string;
+  }
+) => apiFetch<unknown>(`/api/startups/${id}`, {
+  method: "PATCH",
+  body: JSON.stringify(body),
+});
+
+export const reAttribute = (id: string) =>
+  apiFetch<unknown>(`/api/startups/${id}/re-attribute`, { method: "POST" });
+
+// ---------------------------------------------------------------------------
+// Analytics
+// ---------------------------------------------------------------------------
+
+export const getSummary = () => apiFetch<Summary>("/api/analytics/summary");
+export const getCloudDistribution = () => apiFetch<ProviderDistribution[]>("/api/analytics/cloud-distribution");
+export const getAIDistribution = () => apiFetch<ProviderDistribution[]>("/api/analytics/ai-distribution");
+export const getRecentFunding = (limit = 20) =>
+  apiFetch<Record<string, unknown>[]>(`/api/analytics/recent-funding?limit=${limit}`);
+export const getProviderChanges = () =>
+  apiFetch<Record<string, unknown>[]>("/api/analytics/provider-changes");
+
+// ---------------------------------------------------------------------------
+// Pipeline
+// ---------------------------------------------------------------------------
+
+export const getPipelineStatus = () =>
+  apiFetch<{ is_running: boolean; run_id?: string; started_at?: string }>("/api/pipeline/status");
+
+export const listPipelineRuns = (limit = 20) =>
+  apiFetch<PipelineRun[]>(`/api/pipeline/runs?limit=${limit}`);
+
+export const getPipelineRun = (id: string, params?: { stage?: string; level?: string }) => {
+  const qs = new URLSearchParams();
+  if (params?.stage) qs.set("stage", params.stage);
+  if (params?.level) qs.set("level", params.level);
+  const query = qs.toString() ? `?${qs}` : "";
+  return apiFetch<{ run: PipelineRun; logs: Record<string, unknown>[] }>(`/api/pipeline/runs/${id}${query}`);
+};
+
+export const triggerPipeline = (body: {
+  days_back?: number;
+  limit?: number;
+  dry_run?: boolean;
+}) => apiFetch<{ message: string }>("/api/pipeline/trigger", {
+  method: "POST",
+  body: JSON.stringify(body),
+});

@@ -1,0 +1,32 @@
+# GenAI-Intel V2 Dependencies
+
+# Core
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+
+# API Server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Database
+supabase>=2.3.0
+
+# AI
+anthropic>=0.40.0
+
+# Discovery Module
+feedparser>=6.0.10
+beautifulsoup4>=4.12.0
+lxml>=5.1.0
+
+# Resolution Module
+dnspython>=2.4.0
+requests>=2.31.0
+
+# Attribution Module (coming next)
+# Will add when we build it
+
+# Development
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.11.0
