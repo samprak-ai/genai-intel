@@ -73,8 +73,9 @@ export default function CompanyDetailPage() {
   if (!data) return <p className="text-red-500">Company not found.</p>;
 
   const { startup, snapshot, signals, funding_events } = data;
-  const cloudSignals = (signals as Signal[]).filter((s) => s.provider_type === "cloud");
-  const aiSignals    = (signals as Signal[]).filter((s) => s.provider_type === "ai");
+  const cloudSignals = ((signals ?? []) as Signal[]).filter((s) => s.provider_type === "cloud");
+  const aiSignals    = ((signals ?? []) as Signal[]).filter((s) => s.provider_type === "ai");
+  const fundingEvents = (funding_events ?? []) as any[];
 
   return (
     <div className="space-y-8">
@@ -120,7 +121,7 @@ export default function CompanyDetailPage() {
         </CardContent>
       </Card>
 
-      {funding_events.length > 0 && (
+      {fundingEvents.length > 0 && (
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Funding History</CardTitle></CardHeader>
           <CardContent className="p-0">
@@ -131,7 +132,7 @@ export default function CompanyDetailPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {funding_events.map((f: any) => (
+                {fundingEvents.map((f: any) => (
                   <TableRow key={f.id}>
                     <TableCell className="text-sm">{f.announcement_date}</TableCell>
                     <TableCell>{f.funding_round}</TableCell>
@@ -150,7 +151,7 @@ export default function CompanyDetailPage() {
 }
 
 function AttributionCard({ title, provider, isMulti, providers, isNA, naNote, confidence, entrenchment, evidenceCount, type, signals }: any) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   return (
     <Card>
       <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-gray-500">{title}</CardTitle></CardHeader>

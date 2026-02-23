@@ -1,4 +1,4 @@
-import { getSummary, getRecentFunding } from "@/lib/api";
+import { getSummary, getRecentFunding, Summary } from "@/lib/api";
 import { DistributionChart } from "@/components/DistributionChart";
 import { ProviderBadge } from "@/components/ProviderBadge";
 import { ConfidenceBar } from "@/components/ConfidenceBar";
@@ -8,10 +8,20 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const [summary, recentFunding] = await Promise.all([getSummary(), getRecentFunding(15)]);
-  const topCloud = summary.cloud_distribution[0];
-  const topAI    = summary.ai_distribution[0];
-  const total    = summary.cloud_distribution.reduce((s, r) => s + r.startup_count, 0) || summary.total_companies;
+  let summary: Summary = { total_companies: 0, cloud_distribution: [], ai_distribution: [] };
+  let recentFunding: any[] = [];
+
+  try {
+    [summary, recentFunding] = await Promise.all([getSummary(), getRecentFunding(15)]);
+  } catch (_e) {
+    // API unreachable — render with empty state rather than crashing
+  }
+
+  const cloudDist = summary.cloud_distribution ?? [];
+  const aiDist    = summary.ai_distribution ?? [];
+  const topCloud  = cloudDist[0];
+  const topAI     = aiDist[0];
+  const total     = cloudDist.reduce((s, r) => s + r.startup_count, 0) || summary.total_companies;
 
   return (
     <div className="space-y-8">
@@ -31,16 +41,16 @@ export default async function DashboardPage() {
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Cloud Providers</CardTitle></CardHeader>
           <CardContent>
-            {summary.cloud_distribution.length > 0
-              ? <DistributionChart data={summary.cloud_distribution} type="cloud" />
+            {cloudDist.length > 0
+              ? <DistributionChart data={cloudDist} type="cloud" />
               : <p className="text-sm text-gray-400 py-8 text-center">No data yet</p>}
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">AI Providers</CardTitle></CardHeader>
           <CardContent>
-            {summary.ai_distribution.length > 0
-              ? <DistributionChart data={summary.ai_distribution} type="ai" />
+            {aiDist.length > 0
+              ? <DistributionChart data={aiDist} type="ai" />
               : <p className="text-sm text-gray-400 py-8 text-center">No data yet</p>}
           </CardContent>
         </Card>
