@@ -48,14 +48,6 @@ export function ProviderBadge({
     );
   }
 
-  if (!name || name === "Unknown") {
-    return (
-      <Badge variant="outline" className={cn("text-gray-400 border-gray-200", className)}>
-        Unknown
-      </Badge>
-    );
-  }
-
   if (isMulti && providers.length > 0) {
     return (
       <div className={cn("flex flex-wrap gap-1", className)}>
@@ -69,6 +61,14 @@ export function ProviderBadge({
           </Badge>
         ))}
       </div>
+    );
+  }
+
+  if (!name || name === "Unknown") {
+    return (
+      <Badge variant="outline" className={cn("text-gray-400 border-gray-200", className)}>
+        Unknown
+      </Badge>
     );
   }
 
