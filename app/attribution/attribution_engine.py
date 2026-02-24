@@ -898,10 +898,31 @@ class AttributionEngine:
                     seen_providers.add(provider)
             return matched
 
+        # Domain stem = first label of the domain (e.g. "runwayml" from "runwayml.com",
+        # "ricursive" from "ricursive.ai").  Used as a discriminating token in titles:
+        # more specific than the company name (avoids "Runway Girl Network") and
+        # catches legal-name variants (e.g. "Ricursive Intelligence" contains "ricursive").
+        domain_stem = website.split('.')[0].lower() if website else ''
+        _domain_stem_re = (
+            re.compile(rf'\b{re.escape(domain_stem)}\b', re.IGNORECASE)
+            if domain_stem else None
+        )
+
         def _is_valid_title(title: str) -> bool:
-            """Company name must appear and not be part of a name-collision."""
+            """
+            Company must appear in the title, not as part of a name-collision.
+            Two ways to match:
+              (a) company_lower substring in title  (e.g. 'elevenlabs' in 'ElevenLabs launches...')
+              (b) domain stem as a word token        (e.g. 'ricursive' in 'Ricursive Intelligence...')
+            The domain-stem check is more discriminating than the raw company name
+            (e.g. 'runwayml' won't match 'Runway Girl Network').
+            """
             tl = title.lower()
-            return company_lower in tl and not _collision_prefix_re.search(tl)
+            if _collision_prefix_re.search(tl):
+                return False
+            if _domain_stem_re and _domain_stem_re.search(tl):
+                return True
+            return company_lower in tl
 
         # ------------------------------------------------------------------ #
         # SOURCE 1: Google News RSS (single broad query — all providers)      #
@@ -914,8 +935,17 @@ class AttributionEngine:
             'partnership OR announces OR contract OR deal OR signed '
             'OR investment OR selects OR adopts OR deploys OR integrates OR launches'
         )
-        search_id = website if website else company_name
-        gnews_q = quote_plus(f'"{search_id}" {action_terms}')
+        # Query strategy: '"domain.com" OR domain_stem action_terms'
+        # - Quoted domain catches articles that mention the URL directly
+        # - Unquoted stem catches press articles that use the legal/full company name
+        #   (e.g. '"ricursive.ai" OR ricursive' catches "Ricursive Intelligence raises $335M")
+        #   (e.g. '"runwayml.com" OR runwayml' avoids "Runway Girl Network" at title-filter time)
+        # The title filter (_is_valid_title) enforces stem-as-word-token to avoid false positives.
+        if website and domain_stem:
+            gnews_q = quote_plus(f'"{website}" OR {domain_stem} {action_terms}')
+        else:
+            search_id = website if website else company_name
+            gnews_q = quote_plus(f'"{search_id}" {action_terms}')
         gnews_url = (
             f'https://news.google.com/rss/search'
             f'?q={gnews_q}&hl=en-US&gl=US&ceid=US:en'
@@ -932,14 +962,16 @@ class AttributionEngine:
 
                 for entry in feed.entries[:100]:
                     title   = entry.get('title', '')
-                    summary = entry.get('summary', '')
                     link    = entry.get('link', '')
                     pub     = entry.get('published', '')
 
                     if not _is_valid_title(title):
                         continue
 
-                    matches = _classify_entry(title, summary)
+                    # GNews summaries are redirect URL blobs, not readable text —
+                    # pass only the title to avoid false positives from URL tokens
+                    # (e.g. ' google ' matching inside 'news.google.com/rss/...')
+                    matches = _classify_entry(title)
                     strength, weight, age_label = _temporal_weight(pub)
 
                     for ptype, provider, wt_multiplier in matches:
@@ -1011,12 +1043,15 @@ class AttributionEngine:
             #   - For single-word names: quote the name ("Runway" Amazon)
             #   - For multi-word names: quote first word only ("Fundamental" AI Amazon)
             #   - Keep provider term bare, use 2-3 simple action keywords
-            # Use domain as search identifier — always a single token so safe
-            # to quote directly, and avoids name-collision false positives
-            # (e.g. "runwayml.com" won't match "Runway Girl Network" articles).
-            # Fall back to company_name only if website is not available.
-            search_id = website if website else company_name
-            company_ddg = f'"{search_id}"'
+            # Use unquoted domain stem — matches legal name variants in DDG results
+            # (same logic as GNews: 'ricursive' catches "Ricursive Intelligence" articles)
+            # Fall back to quoted domain or company name if no domain available.
+            if domain_stem:
+                company_ddg = domain_stem          # unquoted stem — broadest coverage
+            elif website:
+                company_ddg = f'"{website}"'       # quoted domain
+            else:
+                company_ddg = f'"{company_name}"'  # quoted name — last resort
 
             primary_term = query_terms[0]  # most specific / canonical term
             ddg_query = quote_plus(
