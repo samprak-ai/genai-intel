@@ -363,7 +363,7 @@ class AttributionEngine:
             print(f"    ✅ Subprocessors: {len(sp_result.signals)} signals")
 
         # Cloud provider case studies & marketplace listings
-        cs_signals = self._check_cloud_case_studies(company_name)
+        cs_signals = self._check_cloud_case_studies(company_name, website)
         all_signals.extend(cs_signals)
         if cs_signals:
             print(f"    ✅ Case studies/marketplace: {len(cs_signals)} signals")
@@ -612,7 +612,7 @@ class AttributionEngine:
 
         return signals
 
-    def _check_cloud_case_studies(self, company_name: str) -> List[AttributionSignal]:
+    def _check_cloud_case_studies(self, company_name: str, website: str = "") -> List[AttributionSignal]:
         """
         Check if the startup appears in cloud provider case studies or marketplace.
         These are Tier 1 signals — if AWS/GCP/Azure published a case study about
@@ -720,6 +720,41 @@ class AttributionEngine:
         except Exception:
             pass
 
+        # --- GCP Press Corner & Blog ---
+        # Scans Google Cloud's official press corner and blog for announcements
+        # involving this company. Uses Google News RSS with site: filters so results
+        # are not limited by the 12-month recency window of a generic query.
+        try:
+            search_id = website if website else company_name
+            gcp_press_q = quote_plus(
+                f'"{search_id}" site:googlecloudpresscorner.com OR site:cloud.google.com/blog'
+            )
+            gcp_press_url = (
+                f'https://news.google.com/rss/search'
+                f'?q={gcp_press_q}&hl=en-US&gl=US&ceid=US:en'
+            )
+            r = requests.get(gcp_press_url, timeout=self.TIMEOUT,
+                             headers={'User-Agent': 'Mozilla/5.0'}, verify=False)
+            if r.status_code == 200 and r.content:
+                feed = feedparser.parse(r.content)
+                for entry in feed.entries[:20]:
+                    title = entry.get('title', '')
+                    name_match = name_lower in title.lower()
+                    domain_match = website and website.lower() in title.lower()
+                    if name_match or domain_match:
+                        signals.append(AttributionSignal(
+                            provider_type=ProviderType.CLOUD,
+                            provider_name='GCP',
+                            signal_source='case_study',
+                            signal_strength=SignalStrength.STRONG,
+                            evidence_text=f'Google Cloud press corner/blog: {title[:120]}',
+                            evidence_url=entry.get('link', gcp_press_url),
+                            confidence_weight=1.0,
+                        ))
+                        break
+        except Exception:
+            pass
+
         # --- Azure Case Studies ---
         try:
             url = f'https://customers.microsoft.com/en-us/search?sq={encoded_name}&ff=&p=0&so=story_publish_date%20desc'
@@ -748,28 +783,34 @@ class AttributionEngine:
     # Maps provider search terms → (ProviderType, canonical provider name).
     # Used by _check_partnership_announcements to classify matched articles.
     # Order matters: more specific terms first so 'Google Cloud' beats 'Google'.
+    # Each entry is (term, provider_type, provider_name, weight_multiplier).
+    # weight_multiplier (0.0–1.0) scales the temporal confidence weight:
+    #   1.0 = full confidence (e.g. "google cloud" — unambiguous)
+    #   0.5 = half confidence (e.g. bare "google" — could mean Google AI, not GCP)
+    # More-specific terms must come before less-specific ones (matched in order).
     _PROVIDER_TERM_MAP: list = [
         # Cloud — major hyperscalers
-        ('amazon web services', ProviderType.CLOUD, 'AWS'),
-        (' aws ',               ProviderType.CLOUD, 'AWS'),
-        ('amazon cloud',        ProviderType.CLOUD, 'AWS'),
-        ('amazon',             ProviderType.CLOUD, 'AWS'),
-        ('google cloud',       ProviderType.CLOUD, 'GCP'),
-        ('microsoft azure',    ProviderType.CLOUD, 'Azure'),
-        (' azure ',            ProviderType.CLOUD, 'Azure'),
-        ('microsoft',          ProviderType.CLOUD, 'Azure'),
+        ('amazon web services', ProviderType.CLOUD, 'AWS',       1.0),
+        (' aws ',               ProviderType.CLOUD, 'AWS',       1.0),
+        ('amazon cloud',        ProviderType.CLOUD, 'AWS',       1.0),
+        ('amazon',              ProviderType.CLOUD, 'AWS',       1.0),
+        ('google cloud',        ProviderType.CLOUD, 'GCP',       1.0),
+        (' google ',            ProviderType.CLOUD, 'GCP',       0.5),  # weaker — bare Google mention
+        ('microsoft azure',     ProviderType.CLOUD, 'Azure',     1.0),
+        (' azure ',             ProviderType.CLOUD, 'Azure',     1.0),
+        ('microsoft',           ProviderType.CLOUD, 'Azure',     1.0),
         # Cloud — specialist GPU/AI cloud providers
-        ('coreweave',          ProviderType.CLOUD, 'CoreWeave'),
-        ('lambda labs',        ProviderType.CLOUD, 'Lambda Labs'),
-        ('vast.ai',            ProviderType.CLOUD, 'Vast.ai'),
-        ('oracle cloud',       ProviderType.CLOUD, 'OCI'),
+        ('coreweave',           ProviderType.CLOUD, 'CoreWeave', 1.0),
+        ('lambda labs',         ProviderType.CLOUD, 'Lambda Labs', 1.0),
+        ('vast.ai',             ProviderType.CLOUD, 'Vast.ai',   1.0),
+        ('oracle cloud',        ProviderType.CLOUD, 'OCI',       1.0),
         # AI
-        ('openai',             ProviderType.AI,    'OpenAI'),
-        ('anthropic',          ProviderType.AI,    'Anthropic'),
-        ('vertex ai',          ProviderType.AI,    'Google AI'),
-        ('gemini',             ProviderType.AI,    'Google AI'),
-        ('cohere',             ProviderType.AI,    'Cohere'),
-        ('mistral',            ProviderType.AI,    'Mistral'),
+        ('openai',              ProviderType.AI,    'OpenAI',    1.0),
+        ('anthropic',           ProviderType.AI,    'Anthropic', 1.0),
+        ('vertex ai',           ProviderType.AI,    'Google AI', 1.0),
+        ('gemini',              ProviderType.AI,    'Google AI', 1.0),
+        ('cohere',              ProviderType.AI,    'Cohere',    1.0),
+        ('mistral',             ProviderType.AI,    'Mistral',   1.0),
     ]
 
     def _check_partnership_announcements(self, company_name: str, website: str = "") -> List[AttributionSignal]:
@@ -830,15 +871,16 @@ class AttributionEngine:
 
         def _classify_entry(title: str, summary: str = '') -> list:
             """
-            Return list of (ptype, provider) tuples matched in the given text.
-            Uses _PROVIDER_TERM_MAP — most-specific terms first.
+            Return list of (ptype, provider, weight_multiplier) tuples matched
+            in the given text. Uses _PROVIDER_TERM_MAP — most-specific terms first.
+            weight_multiplier scales the temporal confidence weight for the signal.
             """
             text = f' {title} {summary} '.lower()
             matched = []
             seen_providers = set()
-            for term, ptype, provider in self._PROVIDER_TERM_MAP:
+            for term, ptype, provider, wt in self._PROVIDER_TERM_MAP:
                 if term in text and provider not in seen_providers:
-                    matched.append((ptype, provider))
+                    matched.append((ptype, provider, wt))
                     seen_providers.add(provider)
             return matched
 
@@ -886,7 +928,7 @@ class AttributionEngine:
                     matches = _classify_entry(title, summary)
                     strength, weight, age_label = _temporal_weight(pub)
 
-                    for ptype, provider in matches:
+                    for ptype, provider, wt_multiplier in matches:
                         if provider not in found_providers:
                             found_providers.add(provider)
                             signals.append(AttributionSignal(
@@ -896,7 +938,7 @@ class AttributionEngine:
                                 signal_strength=strength,
                                 evidence_text=f'Partnership news ({age_label}): {title[:100]}',
                                 evidence_url=link,
-                                confidence_weight=weight
+                                confidence_weight=weight * wt_multiplier
                             ))
 
         except Exception:
