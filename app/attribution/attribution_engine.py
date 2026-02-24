@@ -369,7 +369,7 @@ class AttributionEngine:
             print(f"    ✅ Case studies/marketplace: {len(cs_signals)} signals")
 
         # Public partnership announcements (Google News search)
-        partner_signals = self._check_partnership_announcements(company_name)
+        partner_signals = self._check_partnership_announcements(company_name, website)
         all_signals.extend(partner_signals)
         if partner_signals:
             print(f"    ✅ Partnership announcements: {len(partner_signals)} signals")
@@ -772,7 +772,7 @@ class AttributionEngine:
         ('mistral',            ProviderType.AI,    'Mistral'),
     ]
 
-    def _check_partnership_announcements(self, company_name: str) -> List[AttributionSignal]:
+    def _check_partnership_announcements(self, company_name: str, website: str = "") -> List[AttributionSignal]:
         """
         Search for public partnership / deal announcements between the startup
         and cloud/AI providers.
@@ -858,7 +858,8 @@ class AttributionEngine:
             'partnership OR announces OR contract OR deal OR signed '
             'OR investment OR selects OR adopts OR deploys OR integrates OR launches'
         )
-        gnews_q = quote_plus(f'"{company_name}" {action_terms}')
+        search_id = website if website else company_name
+        gnews_q = quote_plus(f'"{search_id}" {action_terms}')
         gnews_url = (
             f'https://news.google.com/rss/search'
             f'?q={gnews_q}&hl=en-US&gl=US&ceid=US:en'
@@ -954,12 +955,12 @@ class AttributionEngine:
             #   - For single-word names: quote the name ("Runway" Amazon)
             #   - For multi-word names: quote first word only ("Fundamental" AI Amazon)
             #   - Keep provider term bare, use 2-3 simple action keywords
-            company_words = company_name.split()
-            if len(company_words) == 1:
-                company_ddg = f'"{company_name}"'
-            else:
-                # Quote only the first word — prevents 202 on multi-word names
-                company_ddg = f'"{company_words[0]}" {" ".join(company_words[1:])}'
+            # Use domain as search identifier — always a single token so safe
+            # to quote directly, and avoids name-collision false positives
+            # (e.g. "runwayml.com" won't match "Runway Girl Network" articles).
+            # Fall back to company_name only if website is not available.
+            search_id = website if website else company_name
+            company_ddg = f'"{search_id}"'
 
             primary_term = query_terms[0]  # most specific / canonical term
             ddg_query = quote_plus(
