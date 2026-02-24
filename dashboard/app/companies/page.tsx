@@ -11,22 +11,22 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const CLOUD_OPTIONS = ["", "AWS", "GCP", "Azure", "CoreWeave"];
-const AI_OPTIONS    = ["", "Anthropic", "OpenAI", "Google AI", "Cohere", "Mistral"];
+const CLOUD_OPTIONS = [{ value: "all", label: "All clouds" }, { value: "AWS", label: "AWS" }, { value: "GCP", label: "GCP" }, { value: "Azure", label: "Azure" }, { value: "CoreWeave", label: "CoreWeave" }];
+const AI_OPTIONS    = [{ value: "all", label: "All AI" }, { value: "Anthropic", label: "Anthropic" }, { value: "OpenAI", label: "OpenAI" }, { value: "Google AI", label: "Google AI" }, { value: "Cohere", label: "Cohere" }, { value: "Mistral", label: "Mistral" }];
 const PER_PAGE = 50;
 
 export default function CompaniesPage() {
   const [rows, setRows]       = useState<StartupRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch]   = useState("");
-  const [cloud, setCloud]     = useState("");
-  const [ai, setAi]           = useState("");
+  const [cloud, setCloud]     = useState("all");
+  const [ai, setAi]           = useState("all");
   const [page, setPage]       = useState(1);
 
   async function load() {
     setLoading(true);
     try {
-      setRows(await getStartups({ search: search || undefined, cloud_provider: cloud || undefined, ai_provider: ai || undefined, page, per_page: PER_PAGE }));
+      setRows(await getStartups({ search: search || undefined, cloud_provider: cloud === "all" ? undefined : cloud, ai_provider: ai === "all" ? undefined : ai, page, per_page: PER_PAGE }));
     } finally { setLoading(false); }
   }
 
@@ -46,13 +46,13 @@ export default function CompaniesPage() {
         <Input placeholder="Search company..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-56" />
         <Select value={cloud} onValueChange={(v) => { setCloud(v); setPage(1); }}>
           <SelectTrigger className="w-36"><SelectValue placeholder="Cloud" /></SelectTrigger>
-          <SelectContent>{CLOUD_OPTIONS.map((o) => <SelectItem key={o} value={o}>{o || "All clouds"}</SelectItem>)}</SelectContent>
+          <SelectContent>{CLOUD_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
         <Select value={ai} onValueChange={(v) => { setAi(v); setPage(1); }}>
           <SelectTrigger className="w-40"><SelectValue placeholder="AI provider" /></SelectTrigger>
-          <SelectContent>{AI_OPTIONS.map((o) => <SelectItem key={o} value={o}>{o || "All AI"}</SelectItem>)}</SelectContent>
+          <SelectContent>{AI_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
-        <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setCloud(""); setAi(""); setPage(1); }}>Clear</Button>
+        <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setCloud("all"); setAi("all"); setPage(1); }}>Clear</Button>
       </div>
 
       <div className="rounded-lg border bg-white overflow-hidden">
