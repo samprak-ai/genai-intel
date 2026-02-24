@@ -329,10 +329,10 @@ class SignalWeights:
 # Partnership overrides (deterministic, highest confidence)
 # Source: Official press releases or company subprocessors pages only
 PARTNERSHIP_OVERRIDES = {
-    # AI Labs
-    "Anthropic":      {"cloud": ["GCP", "AWS"], "ai": "Anthropic"},  # cloud.google.com/customers/anthropic + aboutamazon.com/news/aws/amazon-invests-additional-4-billion-anthropic-ai
-    "OpenAI":         {"cloud": "Azure",  "ai": "OpenAI"},
-    "Cohere":         {"cloud": "AWS",    "ai": "Cohere"},
+    # AI Labs — cloud overrides only; AI side handled by NOT_APPLICABLE_COMPANIES
+    "Anthropic":      {"cloud": ["GCP", "AWS"], "ai": None},  # cloud.google.com/customers/anthropic + aboutamazon.com/news/aws/amazon-invests-additional-4-billion-anthropic-ai
+    "OpenAI":         {"cloud": "Azure",        "ai": None},
+    "Cohere":         {"cloud": "AWS",          "ai": None},
     # Verified from official press releases
     "Apptronik":      {"cloud": "GCP",   "ai": None},    # apptronik.com/news-collection/apptronik-partners-with-google-deepmind-robotics
     "Axiom Space":    {"cloud": "AWS",   "ai": None},    # axiomspace.com/release/amazon-web-services-all-in
@@ -353,10 +353,23 @@ PARTNERSHIP_OVERRIDES = {
 # Format: { "Company Name": {"cloud": <note|None>, "ai": <note|None>} }
 # Set a field to None to attribute it normally; set to a string to mark N/A.
 NOT_APPLICABLE_COMPANIES: dict[str, dict[str, Optional[str]]] = {
+    # Frontier AI labs — build proprietary models, not consumers of external AI providers
+    "Anthropic": {
+        "cloud": None,  # cloud attribution still meaningful (GCP + AWS partnerships)
+        "ai":    "Builds proprietary frontier models — not a consumer of external AI providers",
+    },
+    "OpenAI": {
+        "cloud": None,  # cloud attribution still meaningful (Azure partnership)
+        "ai":    "Builds proprietary frontier models — not a consumer of external AI providers",
+    },
+    "Cohere": {
+        "cloud": None,  # cloud attribution still meaningful (AWS partnership)
+        "ai":    "Builds proprietary frontier models — not a consumer of external AI providers",
+    },
     # GPU neoclouds / compute marketplaces — they ARE the infrastructure
     "Pale Blue Dot": {
         "cloud": "GPU neocloud marketplace — is itself the compute provider, not a consumer",
-        "ai":    None,   # AI provider attribution still meaningful (they use DeepSeek R1)
+        "ai":    None,   # AI provider attribution still meaningful
     },
     # Add more here as discovered, e.g.:
     # "CoreWeave":   {"cloud": "Dedicated GPU cloud provider", "ai": None},

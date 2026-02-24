@@ -191,20 +191,34 @@ class AttributionEngine:
                 print(f"  ℹ️  Not-applicable entry found — some fields marked N/A")
                 cloud_result = self._create_na_attribution(ProviderType.CLOUD, cloud_na_note) if cloud_na_note else None
                 ai_result    = self._create_na_attribution(ProviderType.AI,    ai_na_note)    if ai_na_note    else None
-                # If only one side is N/A, still gather signals for the other
+                # If only one side is N/A, check for a partnership override first,
+                # then fall back to full signal gathering for the non-N/A side.
                 if cloud_result is None or ai_result is None:
-                    signals = self._gather_all_signals(
-                        company_name, website,
-                        lead_investors=lead_investors or [],
-                        founder_background=founder_background or [],
-                        evidence_urls=evidence_urls or [],
-                    )
-                    if cloud_result is None:
-                        cloud_signals = [s for s in signals if s.provider_type == ProviderType.CLOUD]
-                        cloud_result  = self._calculate_attribution(cloud_signals, ProviderType.CLOUD)
-                    if ai_result is None:
-                        ai_signals = [s for s in signals if s.provider_type == ProviderType.AI]
-                        ai_result  = self._calculate_attribution(ai_signals, ProviderType.AI)
+                    # Check partnership overrides before running the full signal pipeline
+                    override = PARTNERSHIP_OVERRIDES.get(company_name)
+                    if override:
+                        if cloud_result is None and override.get('cloud'):
+                            cloud_result = self._create_override_attribution(
+                                company_name, override.get('cloud'), ProviderType.CLOUD
+                            )
+                        if ai_result is None and override.get('ai'):
+                            ai_result = self._create_override_attribution(
+                                company_name, override.get('ai'), ProviderType.AI
+                            )
+                    # For any side still unresolved, run full signal gathering
+                    if cloud_result is None or ai_result is None:
+                        signals = self._gather_all_signals(
+                            company_name, website,
+                            lead_investors=lead_investors or [],
+                            founder_background=founder_background or [],
+                            evidence_urls=evidence_urls or [],
+                        )
+                        if cloud_result is None:
+                            cloud_signals = [s for s in signals if s.provider_type == ProviderType.CLOUD]
+                            cloud_result  = self._calculate_attribution(cloud_signals, ProviderType.CLOUD)
+                        if ai_result is None:
+                            ai_signals = [s for s in signals if s.provider_type == ProviderType.AI]
+                            ai_result  = self._calculate_attribution(ai_signals, ProviderType.AI)
                 return cloud_result, ai_result
 
         # 1b. Partnership overrides — always check first
