@@ -401,12 +401,19 @@ INVESTOR_CLOUD_PRIORS: dict[str, tuple[str, str]] = {
 # and no stronger signal exists, we emit a WEAK (0.3) inference signal.
 # These are heuristics based on typical founder loyalty and existing relationships.
 FOUNDER_CLOUD_PRIORS: dict[str, tuple[str, str]] = {
-    "google brain":     ("GCP", "Founded by ex-Google Brain researchers"),
-    "deepmind":         ("GCP", "Founded by ex-DeepMind researchers"),
-    "google research":  ("GCP", "Founded by ex-Google Research team"),
-    "google cloud":     ("GCP", "Founded by ex-Google Cloud team"),
+    # Google — specific sub-orgs first, broad "google" fallback last
+    # (substring matching means specific keys match before the broad one fires)
+    "google brain":       ("GCP",   "Founded by ex-Google Brain researchers"),
+    "deepmind":           ("GCP",   "Founded by ex-DeepMind researchers"),
+    "google research":    ("GCP",   "Founded by ex-Google Research team"),
+    "google cloud":       ("GCP",   "Founded by ex-Google Cloud team"),
+    "google x":           ("GCP",   "Founded by ex-Google X team"),
+    "google":             ("GCP",   "Founded by ex-Google team"),  # broad fallback — still WEAK (0.3)
+    # Microsoft
     "microsoft research": ("Azure", "Founded by ex-Microsoft Research team"),
-    "openai":           ("Azure", "Founded by ex-OpenAI team"),   # OpenAI runs on Azure
-    "aws":              ("AWS",   "Founded by ex-AWS team"),
-    "amazon":           ("AWS",   "Founded by ex-Amazon team"),
+    # OpenAI → Azure (OpenAI's exclusive cloud is Azure)
+    "openai":             ("Azure", "Founded by ex-OpenAI team"),
+    # Amazon / AWS
+    "aws":                ("AWS",   "Founded by ex-AWS team"),
+    "amazon":             ("AWS",   "Founded by ex-Amazon team"),
 }
