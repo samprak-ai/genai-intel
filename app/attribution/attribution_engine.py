@@ -1984,37 +1984,53 @@ JSON response:"""
     def _create_override_attribution(
         self,
         company_name: str,
-        provider_name: Optional[str],
+        provider_name,   # str | list[str] | None
         provider_type: ProviderType
     ) -> Optional[Attribution]:
-        """Create attribution from a known partnership override"""
+        """Create attribution from a known partnership override.
+
+        provider_name may be a single string OR a list of strings for
+        multi-cloud/multi-AI verified partnerships (e.g. ["GCP", "AWS"]).
+        """
         if not provider_name:
             return None
 
-        signal = AttributionSignal(
-            provider_type=provider_type,
-            provider_name=provider_name,
-            signal_source='partnership_override',
-            signal_strength=SignalStrength.STRONG,
-            evidence_text=f'Official partnership: {company_name} with {provider_name}',
-            confidence_weight=1.0
+        # Normalise to list so the rest of the logic is uniform
+        providers_list: list = (
+            provider_name if isinstance(provider_name, list) else [provider_name]
         )
-        entry = ProviderEntry(
-            provider_name=provider_name,
-            role="Cloud infrastructure" if provider_type == ProviderType.CLOUD else "AI service provider",
-            confidence=1.0,
-            entrenchment=EntrenchmentLevel.STRONG,
-            raw_score=1.0,
-            signals=[signal]
-        )
+        is_multi = len(providers_list) > 1
+        role = "Cloud infrastructure" if provider_type == ProviderType.CLOUD else "AI service provider"
+
+        signals = []
+        entries = []
+        for pname in providers_list:
+            sig = AttributionSignal(
+                provider_type=provider_type,
+                provider_name=pname,
+                signal_source='partnership_override',
+                signal_strength=SignalStrength.STRONG,
+                evidence_text=f'Official partnership: {company_name} with {pname}',
+                confidence_weight=1.0
+            )
+            signals.append(sig)
+            entries.append(ProviderEntry(
+                provider_name=pname,
+                role=role,
+                confidence=1.0,
+                entrenchment=EntrenchmentLevel.STRONG,
+                raw_score=1.0,
+                signals=[sig]
+            ))
+
         return Attribution(
             provider_type=provider_type,
-            is_multi=False,
-            primary_provider=provider_name,
-            providers=[entry],
+            is_multi=is_multi,
+            primary_provider=None if is_multi else providers_list[0],
+            providers=entries,
             confidence=1.0,
-            evidence_count=1,
-            signals=[signal]
+            evidence_count=len(signals),
+            signals=signals,
         )
 
     def _create_na_attribution(

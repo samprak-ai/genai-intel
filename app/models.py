@@ -330,7 +330,7 @@ class SignalWeights:
 # Source: Official press releases or company subprocessors pages only
 PARTNERSHIP_OVERRIDES = {
     # AI Labs
-    "Anthropic":      {"cloud": "GCP",   "ai": "Anthropic"},
+    "Anthropic":      {"cloud": ["GCP", "AWS"], "ai": "Anthropic"},  # cloud.google.com/customers/anthropic + aboutamazon.com/news/aws/amazon-invests-additional-4-billion-anthropic-ai
     "OpenAI":         {"cloud": "Azure",  "ai": "OpenAI"},
     "Cohere":         {"cloud": "AWS",    "ai": "Cohere"},
     # Verified from official press releases
