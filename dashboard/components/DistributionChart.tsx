@@ -1,12 +1,13 @@
 "use client";
 /**
  * DistributionChart — donut pie chart for cloud/AI provider distribution.
- * Uses Recharts PieChart to show proportional share at a glance.
+ * Shows count + percentage labels on each slice, with a rich tooltip.
  */
 
 import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
+import type { PieLabelRenderProps } from "recharts";
 import { ProviderDistribution } from "@/lib/api";
 
 const CLOUD_PALETTE: Record<string, string> = {
@@ -29,21 +30,56 @@ interface Props {
   type: "cloud" | "ai";
 }
 
-export function DistributionChart({ data, type }: Props) {
-  const palette = type === "cloud" ? CLOUD_PALETTE : AI_PALETTE;
+/** Render "25 (58%)" labels outside each slice */
+function renderLabel({
+  cx, cy, midAngle, outerRadius, percent, value,
+}: PieLabelRenderProps) {
+  const RADIAN = Math.PI / 180;
+  const cxNum = Number(cx ?? 0);
+  const cyNum = Number(cy ?? 0);
+  const rNum  = Number(outerRadius ?? 0);
+  const pct   = Number(percent ?? 0);
+
+  // Skip tiny slices to avoid label overlap
+  if (pct < 0.05) return null;
+
+  const angle  = -Number(midAngle ?? 0) * RADIAN;
+  const radius = rNum + 22;
+  const x      = cxNum + radius * Math.cos(angle);
+  const y      = cyNum + radius * Math.sin(angle);
 
   return (
-    <ResponsiveContainer width="100%" height={220}>
+    <text
+      x={x}
+      y={y}
+      textAnchor="middle"
+      dominantBaseline="central"
+      fontSize={11}
+      fill="#374151"
+    >
+      {`${value} (${(pct * 100).toFixed(0)}%)`}
+    </text>
+  );
+}
+
+export function DistributionChart({ data, type }: Props) {
+  const palette = type === "cloud" ? CLOUD_PALETTE : AI_PALETTE;
+  const total   = data.reduce((s, r) => s + r.startup_count, 0);
+
+  return (
+    <ResponsiveContainer width="100%" height={240}>
       <PieChart>
         <Pie
           data={data}
           dataKey="startup_count"
           nameKey="provider"
           cx="50%"
-          cy="50%"
-          innerRadius={55}
-          outerRadius={85}
+          cy="46%"
+          innerRadius={52}
+          outerRadius={78}
           paddingAngle={2}
+          label={renderLabel}
+          labelLine={false}
         >
           {data.map((entry) => (
             <Cell
@@ -53,7 +89,11 @@ export function DistributionChart({ data, type }: Props) {
           ))}
         </Pie>
         <Tooltip
-          formatter={(v: number | string | undefined) => [`${v ?? 0} startups`, "Count"]}
+          formatter={(v: number | string | undefined) => {
+            const n   = Number(v ?? 0);
+            const pct = total > 0 ? ((n / total) * 100).toFixed(1) : "0";
+            return [`${n} startups (${pct}%)`, "Count"];
+          }}
           contentStyle={{ fontSize: 12 }}
         />
         <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
