@@ -92,6 +92,21 @@ class Pipeline:
             # Stage 2: Resolution (find websites for events missing them)
             funding_events = self._stage_resolve(funding_events)
 
+            # Post-resolution dedup: same website = same company
+            # Catches duplicates that slipped through name-based dedup (e.g. Nimble/Ubicquia)
+            seen_websites: set = set()
+            deduped: list = []
+            for event in funding_events:
+                if event.website and event.website in seen_websites:
+                    print(f"  ♻️  Skipping duplicate domain: {event.company_name} ({event.website})")
+                    continue
+                if event.website:
+                    seen_websites.add(event.website)
+                deduped.append(event)
+            if len(deduped) < len(funding_events):
+                print(f"  🔄 Post-resolution dedup: removed {len(funding_events) - len(deduped)} duplicate(s)")
+            funding_events = deduped
+
             # Stage 3: Attribution (cloud + AI providers)
             results = self._stage_attribute(funding_events)
 

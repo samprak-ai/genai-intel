@@ -35,7 +35,17 @@ class DomainResolver:
             'pitchbook.com',
             'medium.com',
             'substack.com',
-            'youtube.com'
+            'youtube.com',
+            # Domain parking / broker sites (Issue 2)
+            'hugedomains.com',
+            'sedo.com',
+            'dan.com',
+            'afternic.com',
+            'godaddy.com',
+            'namecheap.com',
+            'undeveloped.com',
+            'brandbucket.com',
+            'squadhelp.com',
         ]
     
     def resolve(self, company_name: str, article_text: Optional[str] = None) -> Optional[str]:
@@ -136,13 +146,56 @@ class DomainResolver:
                 f"{first_word}.ai",
             ])
         
-        # Test each candidate
+        # Test each candidate — DNS resolve then verify homepage ownership
         for candidate in candidates:
             if self._test_domain_exists(candidate):
-                return candidate
-        
+                if self._name_appears_on_homepage(candidate, company_name):
+                    return candidate
+                # DNS resolves but company name not found — wrong company, skip
+
         return None
-    
+
+    def _name_appears_on_homepage(self, domain: str, company_name: str) -> bool:
+        """
+        Verify the company name appears on the resolved domain's homepage.
+        Prevents resolving generic dictionary-word domains (e.g. nimble.com)
+        to unrelated companies, and detects domain parking pages.
+        """
+        name_lower = company_name.lower()
+        name_slug = name_lower.replace(' ', '')
+
+        # Quick win: if the domain itself contains the company slug, it's likely correct
+        # e.g. "slangai.com" for "Slang AI", "grottoai.com" for "Grotto AI"
+        domain_stripped = domain.replace('www.', '').split('.')[0]
+        if name_slug in domain_stripped or domain_stripped in name_slug:
+            # Still need to check it's not a parking page — fetch and check redirect
+            try:
+                r = requests.get(
+                    f'https://{domain}', timeout=6,
+                    headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True, verify=False
+                )
+                final_host = urlparse(r.url).netloc.replace('www.', '')
+                if any(p in final_host for p in self.reject_patterns):
+                    return False
+            except Exception:
+                pass
+            return True
+
+        try:
+            r = requests.get(
+                f'https://{domain}', timeout=6,
+                headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True, verify=False
+            )
+            # Reject if redirected to a known parking/broker site
+            final_host = urlparse(r.url).netloc.replace('www.', '')
+            if any(p in final_host for p in self.reject_patterns):
+                return False
+            # Check company name presence on page (slug or space-separated)
+            page_lower = r.text.lower()
+            return name_slug in page_lower or name_lower in page_lower
+        except Exception:
+            return False  # can't verify → fall through to AI search
+
     def _test_domain_exists(self, domain: str) -> bool:
         """
         Test if domain exists using DNS lookup

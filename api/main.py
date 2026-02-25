@@ -11,7 +11,6 @@ Docs available at:
 """
 
 import os
-from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()  # Load .env before any imports that read os.getenv
 
@@ -20,31 +19,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.deps import verify_token
 from api.routers import startups, analytics, pipeline as pipeline_router
-from api.scheduler import scheduler
+from api.routers.pipeline import cron_trigger_handler
 
 
 # ---------------------------------------------------------------------------
-# Lifespan — start/stop APScheduler with the server process
-# ---------------------------------------------------------------------------
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    scheduler.start()
-    print("[scheduler] APScheduler started — weekly pipeline runs every Monday 06:00 UTC")
-    yield
-    scheduler.shutdown(wait=False)
-    print("[scheduler] APScheduler stopped")
-
-
-# ---------------------------------------------------------------------------
-# App
+# App — pipeline scheduling handled by Railway Cron (POST /api/pipeline/cron)
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
     title="GenAI-Intel API",
     description="Track cloud and AI provider attribution for AI startups",
     version="1.0.0",
-    lifespan=lifespan,
 )
 
 # CORS — allow the Next.js dashboard
@@ -69,6 +54,18 @@ app.add_middleware(
 app.include_router(startups.router,        dependencies=[Depends(verify_token)])
 app.include_router(analytics.router,       dependencies=[Depends(verify_token)])
 app.include_router(pipeline_router.router, dependencies=[Depends(verify_token)])
+
+
+# Cron endpoint — registered here (not in the protected pipeline router) so it
+# uses its own CRON_SECRET header auth instead of the dashboard Bearer token.
+app.add_api_route(
+    "/api/pipeline/cron",
+    cron_trigger_handler,
+    methods=["POST"],
+    status_code=202,
+    tags=["pipeline"],
+    summary="Trigger pipeline run via Railway Cron Job",
+)
 
 
 # ---------------------------------------------------------------------------

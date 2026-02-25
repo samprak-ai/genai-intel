@@ -6,9 +6,11 @@ POST /api/pipeline/trigger      — start a new pipeline run in background
 GET  /api/pipeline/status       — is a run currently active?
 """
 
+import os
+import secrets
 import threading
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel
 
 from api.deps import get_db
@@ -91,6 +93,30 @@ def trigger_pipeline(body: TriggerRequest, background_tasks: BackgroundTasks):
     )
 
     return {"message": "Pipeline run started", "status": "accepted"}
+
+
+def cron_trigger_handler(request: Request, background_tasks: BackgroundTasks):
+    """
+    Called by Railway Cron Job — protected by X-Cron-Secret header.
+    Not behind verify_token; uses its own CRON_SECRET env var instead.
+    Registered directly on app in api/main.py to bypass router-level auth.
+    Skips silently if a run is already in progress (safe to call twice).
+    """
+    expected = os.getenv("CRON_SECRET")
+    provided = request.headers.get("X-Cron-Secret", "")
+    if expected and not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid cron secret")
+
+    if _active_run:
+        return {"message": "Run already in progress — skipping", "status": "skipped"}
+
+    background_tasks.add_task(
+        _run_pipeline_background,
+        days_back=3,
+        limit=None,
+        dry_run=False,
+    )
+    return {"message": "Pipeline run started by cron", "status": "accepted"}
 
 
 # ---------------------------------------------------------------------------

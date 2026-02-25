@@ -11,6 +11,7 @@ Sources (priority order):
 import feedparser
 import requests
 import re
+import time
 from datetime import datetime, timedelta
 from typing import List, Optional
 from bs4 import BeautifulSoup
@@ -72,6 +73,9 @@ class FundingDiscovery:
                 print(f"    ✅ {event.company_name} — ${event.funding_amount_usd}M {event.funding_round}")
             else:
                 print(f"    ⚠️  Skipped (not a funding announcement)")
+            # Issue 3: Proactive rate limit throttle — stay under 50 req/min
+            if self.anthropic_client:
+                time.sleep(1.2)
 
         # Post-extraction dedup: catch cases where two articles about the same
         # company both passed extraction (e.g. "C2i" and "C2i Semiconductors")
@@ -418,11 +422,20 @@ Return ONLY valid JSON, no explanation."""
             data = json.loads(response_text.strip())
             if data.get('not_funding'):
                 return None
-            amount = data.get('funding_amount_usd')
-            if not amount or float(amount) <= 0:
+
+            # Issue 1: Reject placeholder / unidentified company names
+            company_name = data.get('company_name', 'Unknown')
+            if not company_name or company_name.strip().lower() in ('unknown', 'n/a', 'tbd', ''):
+                print(f"    ⚠️  Skipped (company name not identified)")
                 return None
+
+            # Issue 6: Reject sub-$100K amounts (0.1 = $100K, amounts in millions)
+            amount = data.get('funding_amount_usd')
+            if not amount or float(amount) < 0.1:
+                return None
+
             return FundingEvent(
-                company_name=data.get('company_name', 'Unknown'),
+                company_name=company_name,
                 funding_amount_usd=int(float(amount)),
                 funding_round=data.get('funding_round') or 'Unknown',
                 funding_date=data.get('funding_date'),
@@ -437,6 +450,47 @@ Return ONLY valid JSON, no explanation."""
             )
         except json.JSONDecodeError:
             return None
+        except anthropic.RateLimitError:
+            # Issue 3: Handle rate limits explicitly — wait and retry once
+            print(f"    ⚠️  Rate limit hit — waiting 60s then retrying...")
+            time.sleep(60)
+            try:
+                message = self.anthropic_client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=500,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                response_text = message.content[0].text.strip()
+                if '```json' in response_text:
+                    response_text = response_text.split('```json')[1].split('```')[0]
+                elif '```' in response_text:
+                    response_text = response_text.split('```')[1].split('```')[0]
+                data = json.loads(response_text.strip())
+                if data.get('not_funding'):
+                    return None
+                company_name = data.get('company_name', 'Unknown')
+                if not company_name or company_name.strip().lower() in ('unknown', 'n/a', 'tbd', ''):
+                    return None
+                amount = data.get('funding_amount_usd')
+                if not amount or float(amount) < 0.1:
+                    return None
+                return FundingEvent(
+                    company_name=company_name,
+                    funding_amount_usd=int(float(amount)),
+                    funding_round=data.get('funding_round') or 'Unknown',
+                    funding_date=data.get('funding_date'),
+                    announcement_date=data.get('announcement_date') or pub_date_str,
+                    lead_investors=data.get('lead_investors') or [],
+                    website=data.get('website'),
+                    industry=data.get('industry'),
+                    description=data.get('description'),
+                    source_name=raw_event['source'],
+                    source_url=raw_event['url'],
+                    raw_article_text=article_text[:2000]
+                )
+            except Exception:
+                print(f"    ⚠️  Retry failed after rate limit — skipping article")
+                return None
         except Exception as e:
             print(f"    ⚠️  Extraction failed: {e}")
             return None
