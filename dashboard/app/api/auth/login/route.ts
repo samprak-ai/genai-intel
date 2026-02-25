@@ -11,8 +11,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
+// API_URL is a private server-side env var (set in Vercel/Railway settings).
+// Falls back to NEXT_PUBLIC_API_URL for local dev compatibility.
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  process.env.API_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:8000";
 
 export async function POST(req: NextRequest) {
   const { token } = (await req.json()) as { token?: string };
