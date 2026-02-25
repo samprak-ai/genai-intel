@@ -330,14 +330,21 @@ class SignalWeights:
 # Source: Official press releases or company subprocessors pages only
 PARTNERSHIP_OVERRIDES = {
     # AI Labs — cloud overrides only; AI side handled by NOT_APPLICABLE_COMPANIES
-    "Anthropic":      {"cloud": ["GCP", "AWS"], "ai": None},  # cloud.google.com/customers/anthropic + aboutamazon.com/news/aws/amazon-invests-additional-4-billion-anthropic-ai
-    "OpenAI":         {"cloud": "Azure",        "ai": None},
-    "Cohere":         {"cloud": "AWS",          "ai": None},
+    "Anthropic":      {"cloud": ["GCP", "AWS"], "ai": None,
+                       "source_url": "https://cloud.google.com/customers/anthropic"},
+    "OpenAI":         {"cloud": "Azure",        "ai": None,
+                       "source_url": "https://openai.com/index/openai-and-microsoft-extend-partnership/"},
+    "Cohere":         {"cloud": "AWS",          "ai": None,
+                       "source_url": "https://aws.amazon.com/partners/cohere/"},
     # Verified from official press releases
-    "Apptronik":      {"cloud": "GCP",   "ai": None},    # apptronik.com/news-collection/apptronik-partners-with-google-deepmind-robotics
-    "Axiom Space":    {"cloud": "AWS",   "ai": None},    # axiomspace.com/release/amazon-web-services-all-in
-    "Fundamental AI": {"cloud": "AWS",   "ai": None},    # techfundingnews.com/fundamental-255m-nexus-tabular-ai-oak-hcft-aws/
-    "Upwind":         {"cloud": "AWS",   "ai": None},    # upwind.io/secure-your-aws-environment-with-upwind — "Upwind is built natively on AWS"
+    "Apptronik":      {"cloud": "GCP",          "ai": None,
+                       "source_url": "https://apptronik.com/news-collection/apptronik-partners-with-google-deepmind-robotics"},
+    "Axiom Space":    {"cloud": "AWS",          "ai": None,
+                       "source_url": "https://www.axiomspace.com/release/amazon-web-services-all-in"},
+    "Fundamental AI": {"cloud": "AWS",          "ai": None,
+                       "source_url": "https://techfundingnews.com/fundamental-255m-nexus-tabular-ai-oak-hcft-aws/"},
+    "Upwind":         {"cloud": "AWS",          "ai": None,
+                       "source_url": "https://www.upwind.io/secure-your-aws-environment-with-upwind"},
 }
 
 # Investor → cloud provider priors

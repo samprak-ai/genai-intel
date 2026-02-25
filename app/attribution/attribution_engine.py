@@ -2492,6 +2492,9 @@ JSON response:"""
         is_multi = len(providers_list) > 1
         role = "Cloud infrastructure" if provider_type == ProviderType.CLOUD else "AI service provider"
 
+        # Pull the citation URL stored alongside the override entry
+        source_url = PARTNERSHIP_OVERRIDES.get(company_name, {}).get("source_url")
+
         signals = []
         entries = []
         for pname in providers_list:
@@ -2501,6 +2504,7 @@ JSON response:"""
                 signal_source='partnership_override',
                 signal_strength=SignalStrength.STRONG,
                 evidence_text=f'Official partnership: {company_name} with {pname}',
+                evidence_url=source_url,
                 confidence_weight=1.0
             )
             signals.append(sig)
