@@ -62,10 +62,10 @@ export default function CompaniesPage() {
               <TableHead>Company</TableHead>
               <TableHead>Website</TableHead>
               <TableHead>Cloud</TableHead>
-              <TableHead className="w-32">Conf</TableHead>
-              <TableHead>Entrenchment</TableHead>
+              <TableHead className="w-32 cursor-help" title="How certain we are about the cloud provider attribution">Conf</TableHead>
+              <TableHead className="cursor-help" title="How deeply integrated the provider is, based on signal strength and diversity">Entrenchment</TableHead>
               <TableHead>AI Provider</TableHead>
-              <TableHead className="w-32">Conf</TableHead>
+              <TableHead className="w-32 cursor-help" title="How certain we are about the AI provider attribution">Conf</TableHead>
               <TableHead>Updated</TableHead>
             </TableRow>
           </TableHeader>

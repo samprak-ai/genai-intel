@@ -22,7 +22,8 @@ export function EntrenchmentChip({ level, className }: Props) {
   return (
     <Badge
       variant="outline"
-      className={cn("text-xs font-medium", COLORS[level] ?? COLORS.UNKNOWN, className)}
+      title="How deeply integrated the provider is, based on signal strength and diversity"
+      className={cn("text-xs font-medium cursor-help", COLORS[level] ?? COLORS.UNKNOWN, className)}
     >
       {level}
     </Badge>

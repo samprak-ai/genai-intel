@@ -17,6 +17,27 @@ const STRENGTH_COLORS: Record<string, string> = {
   WEAK:   "bg-gray-100    text-gray-600",
 };
 
+const STRENGTH_TOOLTIPS: Record<string, string> = {
+  STRONG: "Direct evidence: official partnership page, subprocessors list, or DNS",
+  MEDIUM: "Indirect evidence: job postings, website content, or integrations page",
+  WEAK:   "Inferred evidence: investor relationships or LLM-based inference",
+};
+
+const SOURCE_TOOLTIPS: Record<string, string> = {
+  partnership_override:  "Manually verified from an official press release or partnership page",
+  ownership_declaration: "Company explicitly states it is built on this provider",
+  subprocessors:         "Provider listed on the company's official subprocessors / data processing page",
+  job_posting:           "Provider mentioned in job descriptions as part of their tech stack",
+  dns:                   "Detected via DNS records (e.g. nameservers or CNAME pointing to provider)",
+  homepage_investor:     "Investor name on homepage matches a known cloud-affiliated VC",
+  investor_prior:        "Lead investor is known to be affiliated with this cloud provider",
+  evidence_url:          "Detected from a manually supplied evidence URL",
+  llm_inference:         "Inferred by AI based on available website content",
+  integrations_page:     "Provider mentioned on the company's integrations or partners page",
+  tech_docs:             "Provider mentioned in technical documentation or developer resources",
+  security_txt:          "Provider mentioned in the site's security.txt file",
+};
+
 export default function CompanyDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -177,8 +198,8 @@ function AttributionCard({ title, provider, isMulti, providers, isNA, naNote, co
                 {signals.map((s: Signal) => (
                   <div key={s.id} className="rounded border bg-gray-50 p-2 text-xs space-y-0.5">
                     <div className="flex items-center gap-2">
-                      <span className={`px-1.5 py-0.5 rounded font-medium ${STRENGTH_COLORS[s.signal_strength] ?? ""}`}>{s.signal_strength}</span>
-                      <span className="text-gray-500">{s.signal_source}</span>
+                      <span title={STRENGTH_TOOLTIPS[s.signal_strength]} className={`px-1.5 py-0.5 rounded font-medium cursor-help ${STRENGTH_COLORS[s.signal_strength] ?? ""}`}>{s.signal_strength}</span>
+                      <span title={SOURCE_TOOLTIPS[s.signal_source]} className="text-gray-500 cursor-help">{s.signal_source}</span>
                       <span className="text-gray-400 ml-auto">{s.provider_name}</span>
                     </div>
                     {s.evidence_text && <p className="text-gray-600 line-clamp-2">{s.evidence_text}</p>}
