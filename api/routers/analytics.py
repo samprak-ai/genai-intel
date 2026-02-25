@@ -64,7 +64,9 @@ def summary(db: DatabaseClient = Depends(get_db)):
     ai_dist    = db.get_ai_distribution()
     latest_run = db.get_latest_run()
 
-    total = sum(r["startup_count"] for r in cloud_dist) if cloud_dist else 0
+    # Count all startups in the database, not just those with a cloud attribution
+    total_result = db.client.table('startups').select('id', count='exact').execute()
+    total = total_result.count or 0
 
     return {
         "total_companies": total,
