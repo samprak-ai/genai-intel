@@ -1340,7 +1340,115 @@ class AttributionEngine:
             except Exception:
                 continue
 
+        # Step 3.5: Batch LLM relevance filter — discard signals about unrelated entities
+        if signals and self.anthropic_client:
+            signals = self._filter_signals_by_relevance(signals, company_name, website)
         return signals
+
+    def _filter_signals_by_relevance(
+        self,
+        signals: List[AttributionSignal],
+        company_name: str,
+        website: str,
+    ) -> List[AttributionSignal]:
+        """
+        Batch-filter partnership announcement signals using Claude Haiku.
+
+        Discards signals whose article title is clearly about a different entity
+        that shares the company name token (e.g. a public letter, an art event,
+        a geographic location) rather than about THIS startup's cloud/AI usage.
+
+        Falls back to returning all signals unfiltered if the LLM call or JSON
+        parse fails — a network or billing error never silently drops signals.
+
+        Cost: ~$0.0001 per call (~500 tokens at Haiku pricing).
+        """
+        # Extract article titles from evidence_text ("Partnership news (date): TITLE")
+        lines = []
+        for i, sig in enumerate(signals):
+            raw = sig.evidence_text or ''
+            colon_pos = raw.find(': ')
+            title_part = raw[colon_pos + 2:] if colon_pos != -1 else raw
+            lines.append(f'{i + 1}. {title_part}')
+
+        articles_block = '\n'.join(lines)
+
+        prompt = f"""You are a signal filter for a startup intelligence system.
+
+Company: {company_name}
+Website: {website}
+
+The system found the following news article titles while searching for partnership
+announcements between "{company_name}" and cloud or AI providers (AWS, GCP,
+Azure, OpenAI, Anthropic, etc.).
+
+Your task: determine whether each article is actually about the startup
+"{company_name}" using or partnering with a cloud or AI provider — OR whether
+the article is about something else that happens to share a word with the
+company name (e.g. a geographic place, a common English word, a public letter,
+an art event, a different organisation).
+
+Rules:
+- KEEP if the article is plausibly about this specific startup's cloud/AI usage.
+- DISCARD if the article is clearly about a different entity or unrelated event.
+- When in doubt, KEEP.
+
+Articles to evaluate:
+{articles_block}
+
+Respond with a JSON array — one object per article, in order:
+  "index": integer (1-based)
+  "keep": boolean
+  "reason": one short phrase
+
+Return ONLY valid JSON — no markdown, no prose.
+
+JSON:"""
+
+        try:
+            response = self.anthropic_client.messages.create(
+                model='claude-haiku-4-5-20251001',
+                max_tokens=400,
+                messages=[{'role': 'user', 'content': prompt}]
+            )
+            raw = response.content[0].text.strip()
+        except Exception as e:
+            print(f"    ⚠️  Relevance filter LLM call failed: {e} — passing all signals through")
+            return signals
+
+        try:
+            if raw.startswith('```'):
+                raw = re.sub(r'^```[a-z]*\n?', '', raw)
+                raw = re.sub(r'\n?```$', '', raw)
+
+            decisions = json.loads(raw)
+            if not isinstance(decisions, list):
+                print(f"    ⚠️  Relevance filter: unexpected JSON shape — passing all signals through")
+                return signals
+
+            keep_indices: set = set()
+            for item in decisions:
+                idx = int(item.get('index', 0))
+                keep = bool(item.get('keep', True))
+                if keep and 1 <= idx <= len(signals):
+                    keep_indices.add(idx - 1)
+
+            # Any signal the LLM didn't mention defaults to KEEP
+            mentioned = {int(item.get('index', 0)) - 1 for item in decisions}
+            for i in range(len(signals)):
+                if i not in mentioned:
+                    keep_indices.add(i)
+
+            filtered = [sig for i, sig in enumerate(signals) if i in keep_indices]
+            discarded = len(signals) - len(filtered)
+            if discarded:
+                print(f"    🔍 Relevance filter: discarded {discarded} off-topic signal(s) "
+                      f"({len(filtered)} kept)")
+            return filtered
+
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            print(f"    ⚠️  Relevance filter parse error: {e} — passing all signals through")
+            return signals
 
     # ========================================================================
     # TIER 2: STRONG INFERENCE (weight 0.6)
