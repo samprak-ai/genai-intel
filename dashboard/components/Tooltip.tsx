@@ -6,6 +6,10 @@
  *   <Tooltip text="Explanation here">
  *     <span>Hover me</span>
  *   </Tooltip>
+ *
+ *   <Tooltip text="Explanation here" position="below">
+ *     <span>Hover me</span>
+ *   </Tooltip>
  */
 
 import { ReactNode } from "react";
@@ -15,17 +19,20 @@ interface Props {
   text: string;
   children: ReactNode;
   className?: string;
+  position?: "above" | "below";
 }
 
-export function Tooltip({ text, children, className }: Props) {
+export function Tooltip({ text, children, className, position = "above" }: Props) {
+  const isBelow = position === "below";
   return (
     <span className={cn("relative group inline-flex cursor-help", className)}>
       {children}
       <span
         role="tooltip"
         className={cn(
-          // Positioning — appear above, centered
-          "absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 z-50",
+          // Positioning
+          "absolute left-1/2 -translate-x-1/2 z-50",
+          isBelow ? "top-full mt-1.5" : "bottom-full mb-1.5",
           // Appearance
           "w-max max-w-[240px] rounded-md bg-gray-900 px-2.5 py-1.5",
           "text-xs text-white leading-snug text-center whitespace-normal",
@@ -36,7 +43,10 @@ export function Tooltip({ text, children, className }: Props) {
       >
         {text}
         {/* Arrow */}
-        <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+        {isBelow
+          ? <span className="absolute bottom-full left-1/2 -translate-x-1/2 border-4 border-transparent border-b-gray-900" />
+          : <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900" />
+        }
       </span>
     </span>
   );
