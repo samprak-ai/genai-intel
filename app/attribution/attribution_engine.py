@@ -37,6 +37,7 @@ Signal Tiers:
 import os
 import re
 import json
+import ipaddress
 import dns.resolver
 import requests
 import socket
@@ -2099,8 +2100,102 @@ JSON:"""
             pass
         return False
 
+    # Class-level cache so IP ranges are fetched at most once per process lifetime
+    _ip_range_cache: dict = {}
+
+    def _load_cloud_ip_ranges(self) -> dict:
+        """
+        Fetch and cache published IP range lists from AWS, Azure, and GCP.
+
+        Returns a dict mapping provider name → list of ipaddress.IPv4Network objects.
+        Falls back to an empty dict for any provider whose URL fails — the caller
+        degrades gracefully and simply skips that provider.
+
+        Sources:
+          AWS   — https://ip-ranges.amazonaws.com/ip-ranges.json
+          Azure — https://download.microsoft.com/download/7/1/D/71D86715-5596-4529-9B13-DA13A5DE5B63/ServiceTags_Public_20220404.json
+                  (We use the well-known static redirect that always serves the latest file)
+          GCP   — https://www.gstatic.com/ipranges/cloud.json
+        """
+        if self._ip_range_cache:
+            return self._ip_range_cache
+
+        ranges: dict = {'AWS': [], 'Azure': [], 'GCP': []}
+
+        # ── AWS ──────────────────────────────────────────────────────────────
+        try:
+            r = requests.get(
+                'https://ip-ranges.amazonaws.com/ip-ranges.json',
+                timeout=10
+            )
+            for prefix in r.json().get('prefixes', []):
+                cidr = prefix.get('ip_prefix')
+                if cidr:
+                    try:
+                        ranges['AWS'].append(ipaddress.IPv4Network(cidr, strict=False))
+                    except ValueError:
+                        pass
+        except Exception as e:
+            print(f"    ⚠️  Could not load AWS IP ranges: {e}")
+
+        # ── Azure ─────────────────────────────────────────────────────────────
+        # Microsoft updates the download URL weekly. We scrape the download page
+        # to extract the current URL, then fetch that JSON.
+        try:
+            page = requests.get(
+                'https://www.microsoft.com/en-us/download/details.aspx?id=56519',
+                timeout=10,
+            )
+            # Extract the direct download URL from the page HTML
+            azure_url_match = re.search(
+                r'(https://download\.microsoft\.com/download/[^"\']+ServiceTags_Public_\d+\.json)',
+                page.text,
+            )
+            if azure_url_match:
+                azure_url = azure_url_match.group(1)
+                r = requests.get(azure_url, timeout=10, allow_redirects=True)
+                for value in r.json().get('values', []):
+                    for cidr in value.get('properties', {}).get('addressPrefixes', []):
+                        if ':' not in cidr:  # skip IPv6
+                            try:
+                                ranges['Azure'].append(ipaddress.IPv4Network(cidr, strict=False))
+                            except ValueError:
+                                pass
+            else:
+                print(f"    ⚠️  Could not find Azure IP ranges download URL in page")
+        except Exception as e:
+            print(f"    ⚠️  Could not load Azure IP ranges: {e}")
+
+        # ── GCP ───────────────────────────────────────────────────────────────
+        try:
+            r = requests.get(
+                'https://www.gstatic.com/ipranges/cloud.json',
+                timeout=10
+            )
+            for prefix in r.json().get('prefixes', []):
+                cidr = prefix.get('ipv4Prefix')
+                if cidr:
+                    try:
+                        ranges['GCP'].append(ipaddress.IPv4Network(cidr, strict=False))
+                    except ValueError:
+                        pass
+        except Exception as e:
+            print(f"    ⚠️  Could not load GCP IP ranges: {e}")
+
+        AttributionEngine._ip_range_cache = ranges
+        return ranges
+
     def _check_ip_asn(self, website: str) -> List[AttributionSignal]:
-        """Check IP address for cloud provider ownership"""
+        """
+        Check IP address for cloud provider ownership using published IP range lists.
+
+        Uses the official CIDR databases from AWS, Azure, and GCP instead of naive
+        string-prefix matching (which was wrong — e.g. '13.' was mapped to Azure
+        but 13.248.x.x is actually AWS Global Accelerator).
+
+        Falls back silently if DNS resolution or range fetching fails — IP/ASN is
+        a Tier-3 weak signal and should never block attribution.
+        """
         signals = []
         try:
             # Skip if the site is on a hosted platform — the IP belongs to the
@@ -2109,25 +2204,23 @@ JSON:"""
                 print(f"    ℹ️  IP/ASN skipped — hosted platform detected")
                 return signals
 
-            ip = socket.gethostbyname(website)
+            ip_str = socket.gethostbyname(website)
+            ip_addr = ipaddress.IPv4Address(ip_str)
 
-            # Simplified IP prefix ranges — production would use a full ASN database
-            ip_map = [
-                (['52.', '54.', '3.', '18.', '34.200', '35.172'], 'AWS'),
-                (['35.', '34.', '104.196', '146.148'],             'GCP'),
-                (['13.', '20.', '40.', '51.'],                     'Azure'),
-            ]
-            for prefixes, provider in ip_map:
-                if any(ip.startswith(p) for p in prefixes):
+            cloud_ranges = self._load_cloud_ip_ranges()
+
+            for provider, networks in cloud_ranges.items():
+                if any(ip_addr in net for net in networks):
                     signals.append(AttributionSignal(
                         provider_type=ProviderType.CLOUD,
                         provider_name=provider,
                         signal_source='ip_asn',
                         signal_strength=SignalStrength.WEAK,
-                        evidence_text=f'IP {ip} in {provider} range',
+                        evidence_text=f'IP {ip_str} in {provider} range',
                         confidence_weight=0.3
                     ))
-                    break
+                    break  # Only one provider per IP
+
         except Exception:
             pass
         return signals
