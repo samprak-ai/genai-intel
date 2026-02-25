@@ -268,7 +268,13 @@ class Pipeline:
             try:
                 website = self.resolver.resolve(
                     company_name=event.company_name,
-                    article_text=event.raw_article_text
+                    article_text=event.raw_article_text,
+                    funding_round=event.funding_round,
+                    funding_amount_usd=event.funding_amount_usd,
+                    lead_investors=event.lead_investors,
+                    description=event.description,
+                    industry=event.industry,
+                    source_url=event.source_url,
                 )
                 if website:
                     event.website = website

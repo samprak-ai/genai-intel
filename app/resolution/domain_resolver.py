@@ -48,33 +48,51 @@ class DomainResolver:
             'squadhelp.com',
         ]
     
-    def resolve(self, company_name: str, article_text: Optional[str] = None) -> Optional[str]:
+    def resolve(
+        self,
+        company_name: str,
+        article_text: Optional[str] = None,
+        funding_round: Optional[str] = None,
+        funding_amount_usd: Optional[int] = None,
+        lead_investors: Optional[list] = None,
+        description: Optional[str] = None,
+        industry: Optional[str] = None,
+        source_url: Optional[str] = None,
+    ) -> Optional[str]:
         """
         Main resolution method - tries multiple strategies in order
-        
+
         Returns: Clean domain like "company.com" or None
         """
         print(f"\n🔍 Resolving domain for: {company_name}")
-        
+
         # Stage 1: Extract from article (deterministic)
         if article_text:
             domain = self._extract_from_text(article_text)
             if domain:
                 print(f"  ✅ Found in article: {domain}")
                 return domain
-        
+
         # Stage 2: DNS-based guessing (deterministic)
         domain = self._dns_guessing(company_name)
         if domain:
             print(f"  ✅ Found via DNS: {domain}")
             return domain
-        
-        # Stage 3: AI web search (last resort)
-        domain = self._ai_search(company_name)
+
+        # Stage 3: AI web search with full context (last resort)
+        domain = self._ai_search(
+            company_name=company_name,
+            funding_round=funding_round,
+            funding_amount_usd=funding_amount_usd,
+            lead_investors=lead_investors,
+            description=description,
+            industry=industry,
+            source_url=source_url,
+        )
         if domain:
             print(f"  ✅ Found via AI search: {domain}")
             return domain
-        
+
         print(f"  ❌ Could not resolve domain")
         return None
     
@@ -146,6 +164,12 @@ class DomainResolver:
                 f"{first_word}.ai",
             ])
         
+        # Single-word company names (e.g. "Badge", "Jump", "Nimble", "Pulse") are too
+        # ambiguous for DNS guessing — the .com almost certainly belongs to an unrelated
+        # company and the content check can't distinguish them. Skip straight to AI search.
+        if len(name.split()) == 1:
+            return None
+
         # Test each candidate — DNS resolve then verify homepage ownership
         for candidate in candidates:
             if self._test_domain_exists(candidate):
@@ -164,11 +188,18 @@ class DomainResolver:
         name_lower = company_name.lower()
         name_slug = name_lower.replace(' ', '')
 
-        # Quick win: if the domain itself contains the company slug, it's likely correct
+        # Quick win: if domain slug matches a MULTI-WORD company name slug, it's very likely correct
         # e.g. "slangai.com" for "Slang AI", "grottoai.com" for "Grotto AI"
+        # We only apply this for multi-word names (slug len > 6) to avoid false positives on
+        # generic single words like "badge", "jump", "nimble" which match their own .com domains.
         domain_stripped = domain.replace('www.', '').split('.')[0]
-        if name_slug in domain_stripped or domain_stripped in name_slug:
-            # Still need to check it's not a parking page — fetch and check redirect
+        is_distinctive_match = (
+            len(name_slug) > 6  # only for longer, non-generic slugs
+            and ' ' in company_name.strip()  # must be a multi-word name
+            and (name_slug in domain_stripped or domain_stripped in name_slug)
+        )
+        if is_distinctive_match:
+            # Still check it's not a parking page
             try:
                 r = requests.get(
                     f'https://{domain}', timeout=6,
@@ -214,51 +245,103 @@ class DomainResolver:
             except:
                 return False
     
-    def _ai_search(self, company_name: str) -> Optional[str]:
+    def _ai_search(
+        self,
+        company_name: str,
+        funding_round: Optional[str] = None,
+        funding_amount_usd: Optional[int] = None,
+        lead_investors: Optional[list] = None,
+        description: Optional[str] = None,
+        industry: Optional[str] = None,
+        source_url: Optional[str] = None,
+    ) -> Optional[str]:
         """
-        Stage 3: Use Claude with web search to find official website
-        
-        Last resort when deterministic methods fail
+        Stage 3: Use Claude Sonnet with web search to find official website.
+        Passes full funding context so Claude can disambiguate generic company names.
+        Last resort when deterministic methods fail.
         """
-        prompt = f"""Find the official website for the company "{company_name}".
+        # Build context block from all available signals
+        context_lines = []
+        if funding_round and funding_amount_usd:
+            context_lines.append(f"- Recently raised ${funding_amount_usd}M {funding_round}")
+        if description:
+            context_lines.append(f"- Description: {description}")
+        if industry:
+            context_lines.append(f"- Industry: {industry}")
+        if lead_investors:
+            context_lines.append(f"- Lead investors: {', '.join(lead_investors)}")
+        if source_url:
+            context_lines.append(f"- Funding announcement URL: {source_url}")
+        context_block = "\n".join(context_lines) if context_lines else "(no additional context)"
 
-Requirements:
-1. Must be the company's official website (not LinkedIn, Crunchbase, social media)
-2. Must be the root domain (e.g., "company.com" not "linkedin.com/company/...")
-3. Verify the domain actually exists
+        prompt = f"""Find the official website domain for this startup:
 
-Return ONLY the domain in format: "company.com"
+Company: "{company_name}"
+Context:
+{context_block}
 
-If you cannot find a valid official website, return: "NOT_FOUND"
-"""
+Search for the company's official website. Many company names are generic words (e.g. "Badge", \
+"Jump", "Nimble", "Pulse") that could belong to multiple unrelated companies — use the funding \
+context above to find the correct startup, not an unrelated business with the same name.
+
+Return ONLY the root domain, e.g. "trybadge.com" or "getnimble.ai". No protocol, no paths, no \
+explanation. If you cannot confidently identify the correct domain, return: NOT_FOUND"""
 
         try:
             message = self.anthropic_client.messages.create(
                 model="claude-sonnet-4-20250514",
-                max_tokens=500,
+                max_tokens=200,
                 tools=[{
                     "type": "web_search_20250305",
                     "name": "web_search"
                 }],
                 messages=[{"role": "user", "content": prompt}]
             )
-            
-            response = message.content[0].text.strip()
-            
-            # Clean response
-            response = response.replace('https://', '').replace('http://', '').strip()
-            response = response.split()[0]  # Take first word
-            response = response.rstrip('.,;')  # Remove trailing punctuation
-            
-            if response == "NOT_FOUND":
+
+            # Extract text from last content block (the final answer after tool use)
+            response = ""
+            for block in reversed(message.content):
+                if hasattr(block, "text") and block.text.strip():
+                    response = block.text.strip()
+                    break
+
+            if not response:
                 return None
-            
-            # Validate
-            if self._is_valid_domain(response):
-                return response
-            
-            return None
-            
+
+            # Strip protocol
+            response = response.replace('https://', '').replace('http://', '').strip()
+
+            # Check NOT_FOUND before regex extraction
+            if "NOT_FOUND" in response.upper():
+                return None
+
+            # Extract first domain-like pattern from response
+            # Handles: "trybadge.com", "The domain is trybadge.com.", "trybadge.com (official site)"
+            domain_match = re.search(
+                r'\b([a-z0-9][a-z0-9\-]*\.(?:com|ai|io|net|org|co|tech|app|dev|so|xyz|cc|app|vc|health|finance|capital))\b',
+                response.lower()
+            )
+            if not domain_match:
+                print(f"  ⚠️  AI search returned unparseable response: {response[:80]}")
+                return None
+
+            candidate = domain_match.group(1).rstrip('.,;')
+
+            if not self._is_valid_domain(candidate):
+                return None
+
+            # Verify the domain actually exists via DNS
+            if not self._test_domain_exists(candidate):
+                print(f"  ⚠️  AI suggested {candidate} but DNS lookup failed — discarding")
+                return None
+
+            # Verify company name on homepage (soft check — accept even if not found,
+            # since JS-rendered pages and different trading names are common)
+            if not self._name_appears_on_homepage(candidate, company_name):
+                print(f"  ⚠️  AI domain {candidate} exists but company name not on homepage — accepting anyway")
+
+            return candidate
+
         except Exception as e:
             print(f"  ⚠️  AI search failed: {e}")
             return None
