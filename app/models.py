@@ -337,6 +337,7 @@ PARTNERSHIP_OVERRIDES = {
     "Apptronik":      {"cloud": "GCP",   "ai": None},    # apptronik.com/news-collection/apptronik-partners-with-google-deepmind-robotics
     "Axiom Space":    {"cloud": "AWS",   "ai": None},    # axiomspace.com/release/amazon-web-services-all-in
     "Fundamental AI": {"cloud": "AWS",   "ai": None},    # techfundingnews.com/fundamental-255m-nexus-tabular-ai-oak-hcft-aws/
+    "Upwind":         {"cloud": "AWS",   "ai": None},    # upwind.io/secure-your-aws-environment-with-upwind — "Upwind is built natively on AWS"
 }
 
 # Investor → cloud provider priors

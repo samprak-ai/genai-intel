@@ -66,17 +66,17 @@ MULTI_PROVIDER_THRESHOLD = 0.3
 CLOUD_KEYWORDS = {
     'AWS': [
         'amazon web services', ' aws ', 'aws.amazon.com',
-        ' ec2 ', ' s3 ', ' ecs ', ' eks ', 'lambda', 'cloudfront',
+        ' ec2 ', ' s3 ', ' ecs ', ' eks ', 'cloudfront',   # removed: 'lambda' (matches Python lambda expressions)
         'dynamodb', 'redshift', 'sagemaker', 'aws fargate',
         'amazon rds', 'amazon aurora', 'amazon sqs', 'amazon sns',
         'aws glue', 'amazon kinesis', 'aws cdk',
     ],
     'GCP': [
         'google cloud', ' gcp ', 'cloud.google.com',
-        'bigquery', 'cloud run', 'cloud functions', 'gke ',
-        'google kubernetes', 'cloud spanner', 'vertex ai',
-        'cloud storage', 'pub/sub', 'google compute engine',
-        'cloud sql', 'google cloud platform',
+        'bigquery', 'gke ',                                 # removed: 'cloud run', 'cloud functions' (generic)
+        'google kubernetes', 'cloud spanner', 'vertex ai',  # removed: 'cloud storage' (privacy policy boilerplate)
+        'pub/sub', 'google compute engine',                 # removed: 'cloud sql' (generic)
+        'google cloud platform',
     ],
     'Azure': [
         'microsoft azure', ' azure ', 'azure.microsoft.com',
@@ -112,14 +112,226 @@ def _keyword_scan(text: str, keyword_map: dict) -> dict:
     """
     Scan text for provider keywords. Returns {provider_name: [matched_keywords]}.
     Only returns providers that actually matched.
+
+    Normalises the input by replacing non-alphanumeric characters (commas, slashes,
+    hyphens, etc.) with spaces so that space-padded keywords like ' aws ' correctly
+    match 'AWS,' or 'AWS/on-prem'. Multi-word phrases like 'google cloud' are
+    unaffected since their internal spaces survive normalisation.
     """
-    text_lower = text.lower()
+    # Lowercase, replace every non-alphanumeric non-space char with a space,
+    # then wrap with leading/trailing spaces so boundary keywords match at edges.
+    normalised = re.sub(r'[^a-z0-9 ]', ' ', text.lower())
+    normalised = f' {normalised} '
     matches = {}
     for provider, keywords in keyword_map.items():
-        found = [kw for kw in keywords if kw in text_lower]
+        found = [kw for kw in keywords if kw in normalised]
         if found:
             matches[provider] = found
     return matches
+
+
+# ---------------------------------------------------------------------------
+# Sentence-aware job posting scanner (used by _check_job_postings only)
+# ---------------------------------------------------------------------------
+
+# Sentence / bullet-point boundaries in job description text.
+# Splits on: one-or-more newlines, period + 2+ spaces (paragraph break),
+# period + space + capital letter (new sentence).
+# Does NOT split on abbreviations like "e.g." or "Inc." (lowercase follows).
+_SENTENCE_SPLIT_RE = re.compile(
+    r'\n+'               # newlines — bullet / section boundaries
+    r'|\.\s{2,}'         # period + 2+ spaces — paragraph break
+    r'|\.\s+(?=[A-Z])',  # period + space + capital — new sentence start
+    re.UNICODE,
+)
+
+# Verbs that indicate the company itself runs on the provider
+# ("built natively on AWS", "our platform runs on GCP", "powered by Azure")
+_OWNERSHIP_VERBS_RE = re.compile(
+    r'\b(built?\s+(?:natively\s+)?on|runs?\s+on|running\s+on|'
+    r'powered\s+by|hosted?\s+on|hosted?\s+(?:in|with)|'
+    r'deployed?\s+on|operates?\s+on|built?\s+(?:with|using|for)|'
+    r'natively\s+on|infrastructure\s+(?:on|in|runs?\s+on))\b',
+    re.IGNORECASE,
+)
+
+# Verbs that indicate the provider is a target/customer environment, not the company's own
+# ("secure your AWS", "protect Azure workloads", "monitor GCP environments")
+_PRODUCT_VERBS_RE = re.compile(
+    r'\b(secures?|protects?|monitors?|detects?\s+(?:threats?|risks?)|'
+    r'your\s+\w+\s*(?:AWS|GCP|Azure|cloud)|'
+    r'(?:AWS|GCP|Azure)\s+(?:environment|workload|infrastructure|stack|account|tenant)|'
+    r'across\s+your|within\s+your|integrates?\s+with|supports?\s+your|'
+    r'manages?\s+your|scans?\s+your|covers?\s+your)\b',
+    re.IGNORECASE,
+)
+
+
+def _split_job_sentences(text: str) -> list:
+    """Split job description text into sentences / bullet-point fragments."""
+    parts = _SENTENCE_SPLIT_RE.split(text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _is_conjunctive_sentence(
+    sentence: str,
+    matched_providers: list,
+    keyword_map: dict,
+    max_gap: int = 60,
+) -> bool:
+    """
+    Return True when a sentence matching 2+ cloud providers looks like a
+    skill-list enumeration rather than a real infrastructure description.
+
+    Conjunctive (noise):
+        "Knowledge of cloud services (AWS, Azure, Google Cloud)"
+        "AWS or GCP experience preferred"
+
+    Not conjunctive (signal):
+        "migrated from Azure to AWS"  — 'to' is not a list connector
+        "runs across mixed AWS/on-prem nodes" — only one provider
+
+    Detection: at least one pair of provider keywords must be within
+    `max_gap` characters of each other AND have a list connector
+    (comma, 'or', 'and', '/') in the span between them.
+    """
+    if len(matched_providers) < 2:
+        return False
+
+    sentence_lower = sentence.lower()
+    _connector_re = re.compile(r',|\bor\b|\band\b|\s*/\s*')
+
+    # Find earliest occurrence of any keyword for each provider
+    positions: dict = {}
+    for provider in matched_providers:
+        for kw in keyword_map.get(provider, []):
+            pos = sentence_lower.find(kw.strip())   # strip edge spaces before find
+            if pos != -1:
+                if provider not in positions or pos < positions[provider]:
+                    positions[provider] = pos
+
+    if len(positions) < 2:
+        return False
+
+    items = list(positions.items())
+    for i in range(len(items)):
+        for j in range(i + 1, len(items)):
+            _, pos_a = items[i]
+            _, pos_b = items[j]
+            if abs(pos_a - pos_b) > max_gap:
+                continue  # too far apart — not the same list
+            span_start = min(pos_a, pos_b)
+            span_end   = max(pos_a, pos_b) + 30  # extend slightly past trailing keyword
+            span = sentence_lower[span_start:span_end]
+            if _connector_re.search(span):
+                return True  # list connector between two close provider keywords
+
+    return False
+
+
+def _scan_job_sentences(text: str, keyword_map: dict) -> dict:
+    """
+    Sentence-aware wrapper around _keyword_scan() for job posting text.
+
+    Unlike _keyword_scan() which scans the full text at once, this function:
+      1. Splits the text into sentences / bullet points.
+      2. Scans each sentence individually.
+      3. Discards "conjunctive" sentences — those matching 2+ providers where
+         the providers sit close together with a list connector between them.
+         Example discarded: "AWS, Azure, or GCP experience preferred"
+         Example kept:      "architecture spans mixed AWS/on-prem nodes"
+      4. Union-merges signals from all non-conjunctive sentences.
+
+    A provider survives if it appears in at least one non-conjunctive sentence.
+    Returns the same {provider_name: [matched_keywords]} format as _keyword_scan().
+    """
+    merged: dict = {}
+
+    for sentence in _split_job_sentences(text):
+        sent_matches = _keyword_scan(sentence, keyword_map)
+        if not sent_matches:
+            continue
+
+        matched_providers = list(sent_matches.keys())
+
+        # Multiple providers in this sentence — check for conjunctive list noise
+        if len(matched_providers) >= 2 and _is_conjunctive_sentence(
+            sentence, matched_providers, keyword_map
+        ):
+            continue   # discard — "AWS, Azure, GCP" style skill-list noise
+
+        # Single provider, or multi-provider non-conjunctive sentence — keep
+        for provider, keywords in sent_matches.items():
+            if provider not in merged:
+                merged[provider] = []
+            for kw in keywords:
+                if kw not in merged[provider]:
+                    merged[provider].append(kw)
+
+    return merged
+
+
+def _classify_website_sentences(text: str, keyword_map: dict) -> dict:
+    """
+    Sentence-aware cloud/AI keyword scanner for website content.
+
+    Unlike _keyword_scan() (which returns flat matches) or _scan_job_sentences()
+    (which filters conjunctive lists), this function additionally classifies each
+    matched sentence by the verb context surrounding the provider mention:
+
+      OWNERSHIP sentence  → provider appears with "built on", "runs on", "powered by", etc.
+                            → emits at weight 1.0 (STRONG) — self-declared infrastructure
+      PRODUCT sentence    → provider appears with "secure your", "protect", "monitor your"
+                            → discarded — describes what the product does, not what it runs on
+      NEUTRAL sentence    → provider mentioned without strong verb context
+                            → kept at the page's default weight (caller decides)
+
+    Returns a dict of the same shape as _keyword_scan() but with tuple values:
+      { provider_name: (matched_keywords, is_ownership) }
+
+    where is_ownership=True means the caller should use weight 1.0 / SignalStrength.STRONG.
+    """
+    ownership_results: dict = {}   # provider → ([keywords], True)
+    neutral_results:   dict = {}   # provider → ([keywords], False)
+
+    for sentence in _split_job_sentences(text):
+        sent_matches = _keyword_scan(sentence, keyword_map)
+        if not sent_matches:
+            continue
+
+        # Skip conjunctive sentences — "AWS, Azure, GCP" skill lists
+        matched_providers = list(sent_matches.keys())
+        if len(matched_providers) >= 2 and _is_conjunctive_sentence(
+            sentence, matched_providers, keyword_map
+        ):
+            continue
+
+        # Classify the sentence
+        is_product   = bool(_PRODUCT_VERBS_RE.search(sentence))
+        is_ownership = bool(_OWNERSHIP_VERBS_RE.search(sentence))
+
+        if is_product and not is_ownership:
+            continue   # discard — "secure your AWS environment" etc.
+
+        for provider, keywords in sent_matches.items():
+            if is_ownership:
+                # Ownership takes precedence — upgrade this provider
+                if provider not in ownership_results:
+                    ownership_results[provider] = ([], True)
+                for kw in keywords:
+                    if kw not in ownership_results[provider][0]:
+                        ownership_results[provider][0].append(kw)
+            else:
+                # Neutral — only add if not already seen as ownership
+                if provider not in ownership_results and provider not in neutral_results:
+                    neutral_results[provider] = ([], False)
+                if provider not in ownership_results:
+                    for kw in keywords:
+                        if kw not in neutral_results[provider][0]:
+                            neutral_results[provider][0].append(kw)
+
+    # Merge: ownership results take priority over neutral
+    return {**neutral_results, **ownership_results}
 
 
 class AttributionEngine:
@@ -474,6 +686,15 @@ class AttributionEngine:
         """
         if not signals:
             return None
+
+        # ── All-3-providers guard ─────────────────────────────────────────────
+        # If AWS, Azure, AND GCP are all present, the signals are uninformative
+        # (cloud security tools, integration marketplaces, etc. always list all
+        # three). Treat as Unknown rather than fabricating a multi-cloud result.
+        if provider_type == ProviderType.CLOUD:
+            detected = {s.provider_name for s in signals}
+            if {'AWS', 'GCP', 'Azure'}.issubset(detected):
+                return None   # Unknown — all-3 is as good as none
 
         # Group signals and scores by provider
         provider_scores: dict[str, float] = defaultdict(float)
@@ -1326,6 +1547,96 @@ class AttributionEngine:
             pass  # HTTP failures are common for early-stage startups
         return signals
 
+    def _extract_ashby_job_urls(
+        self, index_url: str, soup: BeautifulSoup
+    ) -> List[str]:
+        """
+        Extract individual job posting URLs from Ashby's embedded window.__appData.
+
+        Ashby (jobs.ashbyhq.com) is a React SPA — the board index page renders all
+        job listings client-side from JavaScript, so no <a href> job links appear in
+        the initial HTML. However, the full job list is embedded as JSON in a plain
+        <script> tag: ``window.__appData = { jobBoard: { jobPostings: [...] } }``.
+
+        Each posting object contains an ``id`` (UUID) which forms the individual job
+        URL as: ``https://jobs.ashbyhq.com/{org_slug}/{posting_id}``
+
+        Returns a list of individual job page URLs, or [] on any failure.
+        """
+        script = soup.find('script', string=re.compile(r'window\.__appData'))
+        if not script or not script.string:
+            return []
+        try:
+            raw = script.string
+            # Strip the "window.__appData = " prefix to get raw JSON
+            brace_start = raw.index('{')
+            json_str = raw[brace_start:]
+            # Find the matching closing brace via depth counting (avoids regex on
+            # potentially large JSON blobs with escaped braces in description HTML)
+            depth, end = 0, 0
+            for i, ch in enumerate(json_str):
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            data = json.loads(json_str[:end])
+            postings = data.get('jobBoard', {}).get('jobPostings', [])
+            # Org slug from the index URL path, e.g. "/northwoodspace" → "northwoodspace"
+            org_slug = urlparse(index_url).path.strip('/')
+            # Ashby URLs are UUID-based — no job title in the path — so the
+            # _is_eng_role() URL-keyword sorter in _check_job_postings() won't
+            # fire.  Sort here by job title using the shared cloud-role keywords.
+            def _is_eng_title(posting: dict) -> bool:
+                title = posting.get('title', '').lower()
+                return any(kw in title for kw in self._CLOUD_ROLE_KEYWORDS)
+
+            sorted_postings = (
+                [p for p in postings if _is_eng_title(p)] +
+                [p for p in postings if not _is_eng_title(p)]
+            )
+            return [
+                f'https://jobs.ashbyhq.com/{org_slug}/{p["id"]}'
+                for p in sorted_postings
+                if p.get('id')
+            ]
+        except Exception:
+            return []
+
+    def _extract_ashby_posting_text(self, soup: BeautifulSoup) -> str:
+        """
+        Extract the plain-text job description from an Ashby individual job page.
+
+        Ashby individual job pages are also React SPAs — the job description is
+        stored in window.__appData.posting.descriptionPlainText (inside an inline
+        <script> tag), not in any rendered HTML element.  This method pulls that
+        text out before the script tags are stripped, so keyword scanning works.
+
+        Returns the plain-text description string, or '' on any failure.
+        """
+        script = soup.find('script', string=re.compile(r'window\.__appData'))
+        if not script or not script.string:
+            return ''
+        try:
+            raw = script.string
+            brace_start = raw.index('{')
+            json_str = raw[brace_start:]
+            depth, end = 0, 0
+            for i, ch in enumerate(json_str):
+                if ch == '{':
+                    depth += 1
+                elif ch == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end = i + 1
+                        break
+            data = json.loads(json_str[:end])
+            return data.get('posting', {}).get('descriptionPlainText', '')
+        except Exception:
+            return ''
+
     def _check_job_postings(self, company_name: str) -> List[AttributionSignal]:
         """
         Search for engineering job postings that reveal tech stack.
@@ -1387,6 +1698,15 @@ class AttributionEngine:
                             and href not in individual_job_urls):
                         individual_job_urls.append(href)
 
+                # Ashby renders job listings client-side (React SPA) — the initial
+                # HTML has no <a href> job links, only CDN assets.  Fall back to
+                # parsing window.__appData from the inline <script> tag, which
+                # contains the full job listing JSON including individual posting IDs.
+                if not individual_job_urls and 'ashbyhq.com' in index_url:
+                    individual_job_urls.extend(
+                        self._extract_ashby_job_urls(index_url, soup)
+                    )
+
                 # If we found individual listings, stop trying other boards
                 if individual_job_urls:
                     break
@@ -1422,13 +1742,13 @@ class AttributionEngine:
             except Exception:
                 pass
 
-        # Scan up to 8 individual job pages for tech stack signals
-        # Prioritise engineering/infrastructure roles
-        eng_keywords = ['engineer', 'infrastructure', 'platform', 'devops', 'backend',
-                        'data', 'ml', 'machine learning', 'ai ', 'cloud']
+        # Scan up to 8 individual job pages for tech stack signals.
+        # Prioritise software/infra/cloud roles — these are most likely to list
+        # cloud stack requirements.  Hardware, mechanical, RF, FPGA, and other
+        # discipline-specific engineering titles rarely mention AWS/GCP/Azure.
         def _is_eng_role(url: str) -> bool:
             url_lower = url.lower()
-            return any(kw in url_lower for kw in eng_keywords)
+            return any(kw in url_lower for kw in self._CLOUD_ROLE_KEYWORDS)
 
         # Sort: engineering roles first, then the rest
         sorted_urls = (
@@ -1446,12 +1766,23 @@ class AttributionEngine:
                     continue
 
                 soup = BeautifulSoup(r.text, 'html.parser')
+
+                # Ashby individual job pages are React SPAs — job description
+                # text lives in window.__appData.posting.descriptionPlainText,
+                # not in rendered HTML.  Extract it before stripping <script> tags.
+                extra_text = ''
+                if 'ashbyhq.com' in url:
+                    extra_text = self._extract_ashby_posting_text(soup)
+
                 for tag in soup(['script', 'style', 'nav', 'footer', 'header']):
                     tag.decompose()
                 text = soup.get_text(separator=' ', strip=True)
+                if extra_text:
+                    text = text + ' ' + extra_text
 
-                # Cloud keyword scan
-                cloud_matches = _keyword_scan(text, CLOUD_KEYWORDS)
+                # Cloud keyword scan — sentence-aware to suppress conjunctive
+                # skill-list noise ("AWS, Azure, or GCP experience preferred")
+                cloud_matches = _scan_job_sentences(text, CLOUD_KEYWORDS)
                 for provider, keywords in cloud_matches.items():
                     if provider not in found_cloud:
                         found_cloud.add(provider)
@@ -1465,8 +1796,9 @@ class AttributionEngine:
                             confidence_weight=0.6
                         ))
 
-                # AI keyword scan
-                ai_matches = _keyword_scan(text, AI_KEYWORDS)
+                # AI keyword scan — same conjunction filter for consistency
+                # ("OpenAI, Anthropic, or Cohere" skill lists are also noise)
+                ai_matches = _scan_job_sentences(text, AI_KEYWORDS)
                 for provider, keywords in ai_matches.items():
                     if provider not in found_ai:
                         found_ai.add(provider)
@@ -1561,20 +1893,29 @@ class AttributionEngine:
                         tag.decompose()
                     text = soup.get_text(separator=' ', strip=True)
 
-                    # Scan for cloud keywords
-                    cloud_matches = _keyword_scan(text, CLOUD_KEYWORDS)
-                    for provider, keywords in cloud_matches.items():
+                    # Scan for cloud keywords — ownership-aware sentence classifier
+                    cloud_matches = _classify_website_sentences(text, CLOUD_KEYWORDS)
+                    for provider, (keywords, is_ownership) in cloud_matches.items():
                         sig_key = f"cloud:{provider}:{config['source']}"
                         if sig_key not in found_sources:
                             found_sources.add(sig_key)
+                            # Ownership sentences → STRONG regardless of page type
+                            if is_ownership:
+                                strength = SignalStrength.STRONG
+                                weight   = 1.0
+                                src      = 'ownership_declaration'
+                            else:
+                                strength = config['strength']
+                                weight   = config['weight']
+                                src      = config['source']
                             signals.append(AttributionSignal(
                                 provider_type=ProviderType.CLOUD,
                                 provider_name=provider,
-                                signal_source=config['source'],
-                                signal_strength=config['strength'],
-                                evidence_text=f'{provider} keywords on {path}: {", ".join(keywords[:3])}',
+                                signal_source=src,
+                                signal_strength=strength,
+                                evidence_text=f'{provider} {"ownership" if is_ownership else "keywords"} on {path}: {", ".join(keywords[:3])}',
                                 evidence_url=url,
-                                confidence_weight=config['weight']
+                                confidence_weight=weight,
                             ))
 
                     # Scan for AI keywords
@@ -1592,6 +1933,12 @@ class AttributionEngine:
                                 evidence_url=url,
                                 confidence_weight=config['weight']
                             ))
+
+                    # Homepage only — scan for investor/backer language
+                    # ("backed by Google Ventures", "funded by GV", etc.)
+                    if path == '/':
+                        inv_signals = self._extract_investors_from_text(text, url)
+                        signals.extend(inv_signals)
 
                 except Exception:
                     continue
@@ -1801,6 +2148,100 @@ class AttributionEngine:
                         evidence_text=f'{rationale} (investor: {investor})',
                         confidence_weight=0.3
                     ))
+
+        return signals
+
+    # Job title keywords that identify cloud/infra-relevant engineering roles.
+    # Used in two places: URL-based sort (Lever/Greenhouse/Workable) and
+    # title-based sort (Ashby, where URLs are UUID-only).
+    #
+    # Deliberately excludes hardware disciplines (electrical, mechanical, RF,
+    # FPGA, embedded, antenna) — those rarely mention AWS/GCP/Azure and would
+    # push the 8-page scan cap before reaching software/infra postings.
+    _CLOUD_ROLE_KEYWORDS = [
+        'software',              # Software Engineer — highest signal
+        'backend',               # Backend Engineer
+        'infrastructure',        # Infrastructure Engineer
+        'platform',              # Platform Engineer
+        'devops',                # DevOps Engineer
+        'site reliability',      # Site Reliability Engineer / SRE
+        ' sre',                  # SRE shorthand in URL slugs
+        'cloud',                 # Cloud Engineer / Cloud Architect
+        'full stack',            # Full Stack Engineer
+        'fullstack',
+        'data engineer',         # Data Engineer (not "data analyst" or "data scientist")
+        'ml engineer',           # ML Engineer
+        'machine learning engineer',
+        'security engineer',     # Cloud security often names AWS/GCP services
+        'network engineer',      # Cloud networking roles (VPCs, transit gateways, etc.)
+        'data scientist',        # BigQuery, Vertex AI, SageMaker commonly in job body
+        'data analyst',          # Analytics roles at cloud-native companies mention cloud tools
+    ]
+
+    # Phrases on company homepages that introduce a list of investors/backers.
+    # Deliberately broad — false positives are safe because only names that match
+    # INVESTOR_CLOUD_PRIORS produce a signal; unrecognised VC names are ignored.
+    _BACKER_PHRASES = re.compile(
+        r'(?:backed by|investors include|funded by|supported by|'
+        r'investment from|our investors|raised\s+(?:\$[\d.,]+\s*[MBK]?\s+)?from|'
+        r'with participation from|with support from)\s*[:—\-]?\s*',
+        re.IGNORECASE,
+    )
+
+    def _extract_investors_from_text(
+        self,
+        text: str,
+        source_url: str,
+    ) -> List[AttributionSignal]:
+        """
+        Scan plain page text for investor/backer language and emit WEAK cloud
+        signals when discovered investor names match INVESTOR_CLOUD_PRIORS.
+
+        Handles patterns like:
+          "We are backed by Google Ventures, Sequoia Capital, and Index Ventures"
+          "Funded by GV, M12, and Andreessen Horowitz"
+          "Our investors include Google, Microsoft, and a16z"
+
+        Returns at most one signal per cloud provider (deduped by `seen_providers`).
+        Unknown investors (not in INVESTOR_CLOUD_PRIORS) are silently ignored —
+        no false positives from unrecognised VC names.
+        """
+        signals: List[AttributionSignal] = []
+        seen_providers: set = set()
+
+        for match in self._BACKER_PHRASES.finditer(text):
+            # Take a 300-char window right after the trigger phrase
+            window_start = match.end()
+            window = text[window_start: window_start + 300]
+
+            # Truncate at the first sentence-ending boundary
+            for stop_char in ('.', '\n', ')'):
+                idx = window.find(stop_char)
+                if idx != -1:
+                    window = window[:idx]
+
+            # Split on commas, semicolons, and " and "
+            raw_names = re.split(r',|;|\band\b', window, flags=re.IGNORECASE)
+
+            for raw in raw_names:
+                candidate = raw.strip().strip('"\'').strip()
+                # Reject clearly non-name fragments (too long, contains digits, empty)
+                if not candidate or len(candidate) > 60 or re.search(r'\d', candidate):
+                    continue
+
+                candidate_lower = candidate.lower()
+                for prior_key, (provider, rationale) in INVESTOR_CLOUD_PRIORS.items():
+                    if prior_key in candidate_lower and provider not in seen_providers:
+                        seen_providers.add(provider)
+                        signals.append(AttributionSignal(
+                            provider_type=ProviderType.CLOUD,
+                            provider_name=provider,
+                            signal_source='homepage_investor',
+                            signal_strength=SignalStrength.WEAK,
+                            evidence_text=f'{rationale} (mentioned on homepage: "{candidate}")',
+                            evidence_url=source_url,
+                            confidence_weight=0.3,
+                        ))
 
         return signals
 

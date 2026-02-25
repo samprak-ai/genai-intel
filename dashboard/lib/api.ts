@@ -1,15 +1,54 @@
 /**
  * Typed API client — wraps fetch calls to the FastAPI backend.
  * All functions throw on non-2xx responses.
+ *
+ * Auth: reads the `dashboard_token` cookie and forwards it as a Bearer token.
+ * Works in both server components (next/headers) and client components (document.cookie).
  */
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+/** Read the dashboard_token from the appropriate cookie store. */
+async function getAuthHeader(): Promise<Record<string, string>> {
+  // Server-side (React Server Components, Route Handlers)
+  if (typeof window === "undefined") {
+    try {
+      // Dynamic import so client bundles are not affected
+      const { cookies } = await import("next/headers");
+      const store = await cookies();
+      const token = store.get("dashboard_token")?.value;
+      if (token) return { Authorization: `Bearer ${token}` };
+    } catch {
+      // next/headers unavailable in non-Next contexts (e.g. tests) — ignore
+    }
+    return {};
+  }
+
+  // Client-side
+  const match = document.cookie.match(/(?:^|;\s*)dashboard_token=([^;]+)/);
+  const token = match?.[1];
+  if (token) return { Authorization: `Bearer ${token}` };
+  return {};
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const authHeader = await getAuthHeader();
+
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
     ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeader,
+      ...(init?.headers ?? {}),
+    },
   });
+
+  if (res.status === 401 && typeof window !== "undefined") {
+    // Token invalid or expired — redirect to login
+    window.location.href = "/login";
+    return undefined as unknown as T;
+  }
+
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`API ${res.status}: ${text}`);

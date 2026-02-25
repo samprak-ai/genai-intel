@@ -15,9 +15,10 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()  # Load .env before any imports that read os.getenv
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.deps import verify_token
 from api.routers import startups, analytics, pipeline as pipeline_router
 from api.scheduler import scheduler
 
@@ -64,10 +65,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(startups.router)
-app.include_router(analytics.router)
-app.include_router(pipeline_router.router)
+# Routers — all protected by bearer-token auth
+app.include_router(startups.router,        dependencies=[Depends(verify_token)])
+app.include_router(analytics.router,       dependencies=[Depends(verify_token)])
+app.include_router(pipeline_router.router, dependencies=[Depends(verify_token)])
+
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+
+@app.post("/api/auth/verify", tags=["auth"])
+def auth_verify(_: None = Depends(verify_token)):
+    """
+    Validate a bearer token.  Returns 200 if the token is correct, 401 otherwise.
+    Used by the Next.js login page to confirm a token before storing it as a cookie.
+    """
+    return {"authenticated": True}
 
 
 # ---------------------------------------------------------------------------

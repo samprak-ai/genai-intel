@@ -6,7 +6,6 @@ Sources (priority order):
 1. VC News Daily  — curated feed of ~30 VC rounds/day, near-zero noise
 2. Google News    — multiple targeted queries catch what VCND misses
 3. PR Newswire    — companies self-announce before media sometimes
-4. GlobeNewswire  — same, but heavily pre-filtered due to noise
 """
 
 import feedparser
@@ -53,10 +52,6 @@ class FundingDiscovery:
         prnews = self._fetch_prnewswire(days_back)
         print(f"  PR Newswire:    {len(prnews)} articles found")
         all_articles.extend(prnews)
-
-        globenews = self._fetch_globenewswire(days_back)
-        print(f"  GlobeNewswire:  {len(globenews)} articles found")
-        all_articles.extend(globenews)
 
         unique = self._deduplicate(all_articles)
         print(f"  Total unique:   {len(unique)} articles")
@@ -205,58 +200,6 @@ class FundingDiscovery:
             print(f"  ⚠️  PR Newswire fetch failed: {e}")
         return articles
 
-    def _fetch_globenewswire(self, days_back: int) -> List[dict]:
-        urls = [
-            "https://www.globenewswire.com/RssFeed/subjectcode/16-Venture%20Capital",
-            "https://www.globenewswire.com/RssFeed/subjectcode/14-Funding%20Rounds",
-        ]
-        articles = []
-        cutoff = datetime.now() - timedelta(days=days_back)
-
-        # GlobeNewswire VC/Funding feeds are extremely noisy — market reports,
-        # scholarships, local business PR, etc. Pre-filter before sending to LLM.
-        funding_keywords = [
-            'raises', 'raised', 'funding', 'series a', 'series b', 'series c',
-            'series d', 'series e', 'seed round', 'seed funding', 'pre-seed',
-            'venture', 'investment round', 'closes', 'secures', 'backed by',
-            'led by', 'growth round', 'extension', 'oversubscribed',
-        ]
-        skip_keywords = [
-            'market size', 'market to reach', 'cagr', 'forecast', 'report',
-            'industry analysis', 'scholarship', 'announces partnership',
-            'expands to', 'celebrates', 'names ', 'appoints',
-            'real estate', 'mortgage', 'loan', 'ipo', 'acquisition', 'merger',
-            'presale', 'token sale', 'airdrop', 'ico',
-        ]
-
-        try:
-            for url in urls:
-                feed = feedparser.parse(url, request_headers={'User-Agent': 'Mozilla/5.0'})
-                for entry in feed.entries:
-                    pub_date = self._parse_entry_date(entry)
-                    if not pub_date or pub_date < cutoff:
-                        continue
-
-                    title_lower = entry.title.lower()
-                    summary_lower = entry.get('summary', '').lower()
-
-                    if any(sk in title_lower for sk in skip_keywords):
-                        continue
-
-                    if not any(kw in title_lower or kw in summary_lower for kw in funding_keywords):
-                        continue
-
-                    articles.append({
-                        'title': entry.title,
-                        'url': entry.link,
-                        'published': pub_date,
-                        'summary': entry.get('summary', ''),
-                        'source': 'globenewswire'
-                    })
-        except Exception as e:
-            print(f"  ⚠️  GlobeNewswire fetch failed: {e}")
-        return articles
-
     # ========================================================================
     # DEDUPLICATION
     # ========================================================================
@@ -270,12 +213,11 @@ class FundingDiscovery:
         2. Company name extraction with substring matching
            (catches "C2i raises $15M" vs "C2i Semiconductors raises $15 million")
         
-        Source priority: vcnewsdaily > prnewswire = globenewswire > google_news
+        Source priority: vcnewsdaily > prnewswire > google_news
         """
         source_priority = {
             'vcnewsdaily': 4,
             'prnewswire': 3,
-            'globenewswire': 3,
             'google_news': 1,
         }
 
