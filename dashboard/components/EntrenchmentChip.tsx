@@ -3,6 +3,7 @@
  */
 
 import { Badge } from "@/components/ui/badge";
+import { Tooltip } from "@/components/Tooltip";
 import { cn } from "@/lib/utils";
 
 const COLORS: Record<string, string> = {
@@ -20,12 +21,13 @@ interface Props {
 export function EntrenchmentChip({ level, className }: Props) {
   if (!level) return null;
   return (
-    <Badge
-      variant="outline"
-      title="How deeply integrated the provider is, based on signal strength and diversity"
-      className={cn("text-xs font-medium cursor-help", COLORS[level] ?? COLORS.UNKNOWN, className)}
-    >
-      {level}
-    </Badge>
+    <Tooltip text="How deeply integrated the provider is, based on signal strength and diversity">
+      <Badge
+        variant="outline"
+        className={cn("text-xs font-medium", COLORS[level] ?? COLORS.UNKNOWN, className)}
+      >
+        {level}
+      </Badge>
+    </Tooltip>
   );
 }

@@ -5,6 +5,7 @@ import { getStartups, StartupRow } from "@/lib/api";
 import { ProviderBadge } from "@/components/ProviderBadge";
 import { ConfidenceBar } from "@/components/ConfidenceBar";
 import { EntrenchmentChip } from "@/components/EntrenchmentChip";
+import { Tooltip } from "@/components/Tooltip";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -62,10 +63,10 @@ export default function CompaniesPage() {
               <TableHead>Company</TableHead>
               <TableHead>Website</TableHead>
               <TableHead>Cloud</TableHead>
-              <TableHead className="w-32 cursor-help" title="How certain we are about the cloud provider attribution">Conf</TableHead>
-              <TableHead className="cursor-help" title="How deeply integrated the provider is, based on signal strength and diversity">Entrenchment</TableHead>
+              <TableHead className="w-32"><Tooltip text="How certain we are about the cloud provider attribution">Conf</Tooltip></TableHead>
+              <TableHead><Tooltip text="How deeply integrated the provider is, based on signal strength and diversity">Entrenchment</Tooltip></TableHead>
               <TableHead>AI Provider</TableHead>
-              <TableHead className="w-32 cursor-help" title="How certain we are about the AI provider attribution">Conf</TableHead>
+              <TableHead className="w-32"><Tooltip text="How certain we are about the AI provider attribution">Conf</Tooltip></TableHead>
               <TableHead>Updated</TableHead>
             </TableRow>
           </TableHeader>

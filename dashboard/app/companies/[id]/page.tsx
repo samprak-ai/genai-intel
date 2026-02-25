@@ -5,6 +5,7 @@ import { getStartup, patchStartup, reAttribute, Signal } from "@/lib/api";
 import { ProviderBadge } from "@/components/ProviderBadge";
 import { ConfidenceBar } from "@/components/ConfidenceBar";
 import { EntrenchmentChip } from "@/components/EntrenchmentChip";
+import { Tooltip } from "@/components/Tooltip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -198,8 +199,12 @@ function AttributionCard({ title, provider, isMulti, providers, isNA, naNote, co
                 {signals.map((s: Signal) => (
                   <div key={s.id} className="rounded border bg-gray-50 p-2 text-xs space-y-0.5">
                     <div className="flex items-center gap-2">
-                      <span title={STRENGTH_TOOLTIPS[s.signal_strength]} className={`px-1.5 py-0.5 rounded font-medium cursor-help ${STRENGTH_COLORS[s.signal_strength] ?? ""}`}>{s.signal_strength}</span>
-                      <span title={SOURCE_TOOLTIPS[s.signal_source]} className="text-gray-500 cursor-help">{s.signal_source}</span>
+                      <Tooltip text={STRENGTH_TOOLTIPS[s.signal_strength] ?? s.signal_strength}>
+                        <span className={`px-1.5 py-0.5 rounded font-medium ${STRENGTH_COLORS[s.signal_strength] ?? ""}`}>{s.signal_strength}</span>
+                      </Tooltip>
+                      <Tooltip text={SOURCE_TOOLTIPS[s.signal_source] ?? s.signal_source}>
+                        <span className="text-gray-500">{s.signal_source}</span>
+                      </Tooltip>
                       <span className="text-gray-400 ml-auto">{s.provider_name}</span>
                     </div>
                     {s.evidence_text && <p className="text-gray-600 line-clamp-2">{s.evidence_text}</p>}
