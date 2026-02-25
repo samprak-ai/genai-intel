@@ -1,11 +1,11 @@
 "use client";
 /**
- * DistributionChart — horizontal bar chart for cloud/AI provider distribution.
- * Uses Recharts BarChart in horizontal layout.
+ * DistributionChart — donut pie chart for cloud/AI provider distribution.
+ * Uses Recharts PieChart to show proportional share at a glance.
  */
 
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import { ProviderDistribution } from "@/lib/api";
 
@@ -34,31 +34,30 @@ export function DistributionChart({ data, type }: Props) {
 
   return (
     <ResponsiveContainer width="100%" height={220}>
-      <BarChart
-        layout="vertical"
-        data={data}
-        margin={{ top: 4, right: 24, left: 8, bottom: 4 }}
-      >
-        <XAxis type="number" tick={{ fontSize: 12 }} />
-        <YAxis
-          dataKey="provider"
-          type="category"
-          width={90}
-          tick={{ fontSize: 12 }}
-        />
-        <Tooltip
-          formatter={(v: number | string | undefined) => [`${v ?? 0} startups`, "Count"]}
-          contentStyle={{ fontSize: 12 }}
-        />
-        <Bar dataKey="startup_count" radius={[0, 4, 4, 0]}>
+      <PieChart>
+        <Pie
+          data={data}
+          dataKey="startup_count"
+          nameKey="provider"
+          cx="50%"
+          cy="50%"
+          innerRadius={55}
+          outerRadius={85}
+          paddingAngle={2}
+        >
           {data.map((entry) => (
             <Cell
               key={entry.provider}
               fill={palette[entry.provider] ?? "#94A3B8"}
             />
           ))}
-        </Bar>
-      </BarChart>
+        </Pie>
+        <Tooltip
+          formatter={(v: number | string | undefined) => [`${v ?? 0} startups`, "Count"]}
+          contentStyle={{ fontSize: 12 }}
+        />
+        <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+      </PieChart>
     </ResponsiveContainer>
   );
 }
