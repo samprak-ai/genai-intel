@@ -47,12 +47,10 @@ export async function POST(req: NextRequest) {
   // Token is valid — set it as an HttpOnly cookie (inaccessible to JS)
   const response = NextResponse.json({ ok: true });
   response.cookies.set("dashboard_token", token, {
-    httpOnly: true,
+    httpOnly: false,  // Must be readable by client-side api.ts via document.cookie
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     path: "/",
-    // No explicit maxAge → session cookie; cleared when browser closes.
-    // Set maxAge: 60 * 60 * 24 * 30 for 30-day persistence if preferred.
     maxAge: 60 * 60 * 24 * 30, // 30 days — persistent across browser restarts
   });
   return response;
