@@ -15,7 +15,9 @@ const CLOUD_PALETTE: Record<string, string> = {
   GCP:           "#22C55E",  // green
   Azure:         "#3B82F6",  // blue
   "Multi-Cloud": "#6366F1",  // indigo — mixed hyperscaler usage
-  Other:         "#9CA3AF",  // gray   — non-hyperscaler (CoreWeave etc.)
+  Hybrid:        "#14B8A6",  // teal   — cloud + on-premises mix
+  "On-Premises": "#64748B",  // slate  — own infrastructure
+  Other:         "#9CA3AF",  // gray   — neo/GPU clouds (CoreWeave, Lambda etc.)
   Unknown:       "#D1D5DB",  // light gray
 };
 

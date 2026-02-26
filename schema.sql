@@ -204,15 +204,16 @@ WHERE mf.startup_id IS NULL OR mf.max_funding_usd >= 10
 ORDER BY s.id, a.snapshot_date DESC NULLS LAST;
 
 -- Cloud provider distribution — one row per startup.
--- Multi-cloud startups count as a single "Multi-Cloud" slice.
--- Non-hyperscaler single providers (not AWS/GCP/Azure) count as "Other".
+-- On-Premises and Hybrid are their own named slices; other non-hyperscalers → "Other".
 DROP VIEW IF EXISTS cloud_provider_distribution;
 CREATE VIEW cloud_provider_distribution AS
 SELECT
     CASE
-        WHEN cloud_is_multi                                    THEN 'Multi-Cloud'
-        WHEN cloud_primary_provider IN ('AWS', 'GCP', 'Azure') THEN cloud_primary_provider
-        WHEN cloud_primary_provider IS NOT NULL                THEN 'Other'
+        WHEN cloud_is_multi AND cloud_primary_provider = 'Hybrid'   THEN 'Hybrid'
+        WHEN cloud_is_multi                                          THEN 'Multi-Cloud'
+        WHEN cloud_primary_provider IN ('AWS', 'GCP', 'Azure')       THEN cloud_primary_provider
+        WHEN cloud_primary_provider = 'On-Premises'                  THEN 'On-Premises'
+        WHEN cloud_primary_provider IS NOT NULL                      THEN 'Other'
         ELSE 'Unknown'
     END AS provider,
     COUNT(*) AS startup_count,

@@ -119,6 +119,43 @@ CLOUD_KEYWORDS = {
         'azure kubernetes', ' aks ', 'azure sql', 'azure cognitive',
         'azure openai', 'azure ml', 'azure pipelines',
     ],
+    # ------------------------------------------------------------------ #
+    # Neo / GPU cloud providers                                           #
+    # ------------------------------------------------------------------ #
+    'Lambda': [
+        'lambda.cloud', 'lambdalabs.com', 'lambda labs', 'lambda gpu cloud',
+    ],
+    'Crusoe': [
+        'crusoe.ai', 'crusoe cloud', 'crusoecloud', 'crusoe energy',
+    ],
+    'OVH': [
+        'ovhcloud', 'ovh cloud', 'ovh.net', 'ovh.com',
+    ],
+    'Vultr': [
+        'vultr.com', ' vultr ',
+    ],
+    'Paperspace': [
+        'paperspace.com', ' paperspace ', 'gradient.run',
+    ],
+    'Nebius': [
+        'nebius.ai', 'nebius cloud',
+    ],
+    'Fluidstack': [
+        'fluidstack.io', ' fluidstack ',
+    ],
+    # ------------------------------------------------------------------ #
+    # On-Premises signals                                                 #
+    # Deliberately conservative — phrases that clearly indicate own infra #
+    # ------------------------------------------------------------------ #
+    'On-Premises': [
+        'on-premises', 'on-prem', 'on premise',
+        'self-hosted infrastructure', 'self hosted infrastructure',
+        'private datacenter', 'private data center',
+        'own datacenter', 'own data center',
+        'bare metal', 'colocated', 'colocation', 'colo facility',
+        'air-gapped',
+        'hpe proliant', 'dell emc', 'lenovo thinksystem',
+    ],
 }
 
 AI_KEYWORDS = {
@@ -794,7 +831,7 @@ class AttributionEngine:
         gap          = top_score - second_score
 
         if gap < MULTI_PROVIDER_THRESHOLD:
-            return Attribution(
+            result = Attribution(
                 provider_type=provider_type,
                 is_multi=True,
                 primary_provider=None,
@@ -805,7 +842,7 @@ class AttributionEngine:
             )
         else:
             winner = provider_entries[0]
-            return Attribution(
+            result = Attribution(
                 provider_type=provider_type,
                 is_multi=False,
                 primary_provider=winner.provider_name,
@@ -814,6 +851,19 @@ class AttributionEngine:
                 evidence_count=len(signals),
                 signals=signals
             )
+
+        # ------------------------------------------------------------------ #
+        # Hybrid detection: On-Premises + any cloud provider = Hybrid         #
+        # Applies only to cloud attributions where both own-infra and         #
+        # external-cloud signals were found.                                  #
+        # ------------------------------------------------------------------ #
+        if provider_type == ProviderType.CLOUD:
+            provider_names = {p.provider_name for p in result.providers}
+            if 'On-Premises' in provider_names and len(provider_names) > 1:
+                result.primary_provider = 'Hybrid'
+                result.is_multi = True
+
+        return result
 
     def _infer_role(
         self,
@@ -1090,10 +1140,25 @@ class AttributionEngine:
         (' azure ',             ProviderType.CLOUD, 'Azure',     1.0),
         ('microsoft',           ProviderType.CLOUD, 'Azure',     1.0),
         # Cloud — specialist GPU/AI cloud providers
-        ('coreweave',           ProviderType.CLOUD, 'CoreWeave', 1.0),
-        ('lambda labs',         ProviderType.CLOUD, 'Lambda Labs', 1.0),
-        ('vast.ai',             ProviderType.CLOUD, 'Vast.ai',   1.0),
-        ('oracle cloud',        ProviderType.CLOUD, 'OCI',       1.0),
+        ('coreweave',              ProviderType.CLOUD, 'CoreWeave',  1.0),
+        ('lambda labs',            ProviderType.CLOUD, 'Lambda',     1.0),
+        ('lambda.cloud',           ProviderType.CLOUD, 'Lambda',     1.0),
+        ('crusoe',                 ProviderType.CLOUD, 'Crusoe',     1.0),
+        ('ovhcloud',               ProviderType.CLOUD, 'OVH',        1.0),
+        ('ovh cloud',              ProviderType.CLOUD, 'OVH',        1.0),
+        ('vultr',                  ProviderType.CLOUD, 'Vultr',      1.0),
+        ('paperspace',             ProviderType.CLOUD, 'Paperspace', 1.0),
+        ('nebius',                 ProviderType.CLOUD, 'Nebius',     1.0),
+        ('fluidstack',             ProviderType.CLOUD, 'Fluidstack', 1.0),
+        ('vast.ai',                ProviderType.CLOUD, 'Vast.ai',    1.0),
+        ('oracle cloud',           ProviderType.CLOUD, 'OCI',        1.0),
+        # On-Premises — MEDIUM weight (indirect signals); air-gapped is STRONG
+        ('on-premises',            ProviderType.CLOUD, 'On-Premises', 0.6),
+        ('on-prem',                ProviderType.CLOUD, 'On-Premises', 0.6),
+        ('private datacenter',     ProviderType.CLOUD, 'On-Premises', 0.6),
+        ('private data center',    ProviderType.CLOUD, 'On-Premises', 0.6),
+        ('bare metal',             ProviderType.CLOUD, 'On-Premises', 0.6),
+        ('air-gapped',             ProviderType.CLOUD, 'On-Premises', 1.0),
         # AI
         ('openai',              ProviderType.AI,    'OpenAI',    1.0),
         ('anthropic',           ProviderType.AI,    'Anthropic', 1.0),
@@ -1278,11 +1343,20 @@ class AttributionEngine:
         # No sleeps needed — proper API with rate limits, not HTML scraping.  #
         # ------------------------------------------------------------------ #
         provider_queries = {
+            # Hyperscalers
             'AWS':        (ProviderType.CLOUD, ['Amazon Web Services', 'AWS']),
             'GCP':        (ProviderType.CLOUD, ['Google Cloud']),
             'Azure':      (ProviderType.CLOUD, ['Microsoft Azure', 'Azure']),
+            # Neo/GPU clouds
             'CoreWeave':  (ProviderType.CLOUD, ['CoreWeave']),
+            'Lambda':     (ProviderType.CLOUD, ['Lambda Labs', 'lambda.cloud']),
+            'Crusoe':     (ProviderType.CLOUD, ['Crusoe Cloud', 'Crusoe Energy']),
+            'OVH':        (ProviderType.CLOUD, ['OVHcloud', 'OVH Cloud']),
+            'Vultr':      (ProviderType.CLOUD, ['Vultr']),
+            'Paperspace': (ProviderType.CLOUD, ['Paperspace', 'Gradient by Paperspace']),
+            'Nebius':     (ProviderType.CLOUD, ['Nebius AI', 'Nebius Cloud']),
             'OCI':        (ProviderType.CLOUD, ['Oracle Cloud']),
+            # AI providers
             'OpenAI':     (ProviderType.AI,    ['OpenAI']),
             'Anthropic':  (ProviderType.AI,    ['Anthropic']),
             'Google AI':  (ProviderType.AI,    ['Vertex AI', 'Gemini']),
@@ -1388,16 +1462,25 @@ class AttributionEngine:
 
             # Build provider domain for site: restriction
             provider_domain_map = {
-                'AWS':       'aws.amazon.com',
-                'GCP':       'cloud.google.com',
-                'Azure':     'azure.microsoft.com',
-                'CoreWeave': 'coreweave.com',
-                'OCI':       'oracle.com',
-                'OpenAI':    'openai.com',
-                'Anthropic': 'anthropic.com',
-                'Google AI': 'cloud.google.com',
-                'Cohere':    'cohere.com',
-                'Mistral':   'mistral.ai',
+                # Hyperscalers
+                'AWS':        'aws.amazon.com',
+                'GCP':        'cloud.google.com',
+                'Azure':      'azure.microsoft.com',
+                # Neo/GPU clouds
+                'CoreWeave':  'coreweave.com',
+                'Lambda':     'lambdalabs.com',
+                'Crusoe':     'crusoe.ai',
+                'OVH':        'ovhcloud.com',
+                'Vultr':      'vultr.com',
+                'Paperspace': 'paperspace.com',
+                'Nebius':     'nebius.ai',
+                'OCI':        'oracle.com',
+                # AI providers
+                'OpenAI':     'openai.com',
+                'Anthropic':  'anthropic.com',
+                'Google AI':  'cloud.google.com',
+                'Cohere':     'cohere.com',
+                'Mistral':    'mistral.ai',
             }
             provider_domain = provider_domain_map.get(provider)
             if not provider_domain:

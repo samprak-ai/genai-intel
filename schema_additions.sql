@@ -154,15 +154,17 @@ ORDER BY s.id, a.snapshot_date DESC NULLS LAST;
 
 -- 2. Recreate cloud_provider_distribution
 --    One row per startup — multi-cloud startups count as a single "Multi-Cloud" slice.
---    Major providers (AWS, GCP, Azure) are named directly; everything else → "Other".
+--    On-Premises and Hybrid are their own slices; other non-hyperscalers → "Other".
 --    Must DROP first — Postgres won't allow column renames via CREATE OR REPLACE VIEW.
 DROP VIEW IF EXISTS cloud_provider_distribution;
 CREATE VIEW cloud_provider_distribution AS
 SELECT
     CASE
-        WHEN cloud_is_multi                               THEN 'Multi-Cloud'
-        WHEN cloud_primary_provider IN ('AWS','GCP','Azure') THEN cloud_primary_provider
-        WHEN cloud_primary_provider IS NOT NULL           THEN 'Other'
+        WHEN cloud_is_multi AND cloud_primary_provider = 'Hybrid'   THEN 'Hybrid'
+        WHEN cloud_is_multi                                          THEN 'Multi-Cloud'
+        WHEN cloud_primary_provider IN ('AWS', 'GCP', 'Azure')       THEN cloud_primary_provider
+        WHEN cloud_primary_provider = 'On-Premises'                  THEN 'On-Premises'
+        WHEN cloud_primary_provider IS NOT NULL                      THEN 'Other'
         ELSE 'Unknown'
     END AS provider,
     COUNT(*) AS startup_count,

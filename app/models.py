@@ -381,9 +381,34 @@ NOT_APPLICABLE_COMPANIES: dict[str, dict[str, Optional[str]]] = {
         "cloud": "GPU neocloud marketplace — is itself the compute provider, not a consumer",
         "ai":    None,   # AI provider attribution still meaningful
     },
-    # Add more here as discovered, e.g.:
-    # "CoreWeave":   {"cloud": "Dedicated GPU cloud provider", "ai": None},
-    # "Lambda Labs": {"cloud": "GPU cloud provider", "ai": None},
+    "CoreWeave": {
+        "cloud": "Dedicated GPU cloud provider — is itself the compute infrastructure",
+        "ai":    None,
+    },
+    "Lambda Labs": {
+        "cloud": "GPU cloud provider — is itself the compute infrastructure",
+        "ai":    None,
+    },
+    "Lambda": {
+        "cloud": "GPU cloud provider — is itself the compute infrastructure",
+        "ai":    None,
+    },
+    "Crusoe": {
+        "cloud": "Stranded-energy GPU cloud — is itself the compute infrastructure",
+        "ai":    None,
+    },
+    "Vast.ai": {
+        "cloud": "GPU compute marketplace — is itself the compute infrastructure",
+        "ai":    None,
+    },
+    "Vultr": {
+        "cloud": "Cloud infrastructure provider — is itself the compute infrastructure",
+        "ai":    None,
+    },
+    "Fluidstack": {
+        "cloud": "GPU cloud provider — is itself the compute infrastructure",
+        "ai":    None,
+    },
 }
 
 INVESTOR_CLOUD_PRIORS: dict[str, tuple[str, str]] = {
