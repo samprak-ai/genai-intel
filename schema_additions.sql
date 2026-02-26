@@ -192,6 +192,8 @@ GROUP BY cloud_providers, cloud_is_multi
 ORDER BY startup_count DESC;
 
 -- 5. Recreate recent_funding_with_attribution (now respects not-applicable)
+--    Returns structured provider fields so the dashboard component can apply
+--    Multi-Cloud / Other (...) display logic consistently.
 CREATE OR REPLACE VIEW recent_funding_with_attribution AS
 SELECT
     s.canonical_name,
@@ -201,18 +203,18 @@ SELECT
     f.funding_round,
     f.announcement_date,
     f.source_name,
-    CASE
-        WHEN la.cloud_not_applicable THEN 'Not Applicable'
-        WHEN la.cloud_is_multi       THEN 'Multi (' || array_to_string(la.cloud_providers, ', ') || ')'
-        ELSE la.cloud_primary_provider
-    END as cloud_display,
+    -- Cloud: structured fields for ProviderBadge
+    la.cloud_is_multi,
+    la.cloud_primary_provider,
+    la.cloud_providers,
     la.cloud_confidence,
-    CASE
-        WHEN la.ai_not_applicable THEN 'Not Applicable'
-        WHEN la.ai_is_multi       THEN 'Multi (' || array_to_string(la.ai_providers, ', ') || ')'
-        ELSE la.ai_primary_provider
-    END as ai_display,
-    la.ai_confidence
+    la.cloud_not_applicable,
+    -- AI: structured fields for ProviderBadge
+    la.ai_is_multi,
+    la.ai_primary_provider,
+    la.ai_providers,
+    la.ai_confidence,
+    la.ai_not_applicable
 FROM funding_events f
 JOIN startups s ON f.startup_id = s.id
 LEFT JOIN latest_attributions la ON s.id = la.id

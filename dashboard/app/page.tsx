@@ -80,9 +80,9 @@ export default async function DashboardPage() {
                       <TableCell className="font-medium">{r.canonical_name}</TableCell>
                       <TableCell>{r.funding_round}</TableCell>
                       <TableCell>${r.funding_amount_usd}M</TableCell>
-                      <TableCell><ProviderBadge name={r.cloud_display} type="cloud" /></TableCell>
+                      <TableCell><ProviderBadge name={r.cloud_primary_provider} isMulti={r.cloud_is_multi} providers={r.cloud_providers} isNotApplicable={r.cloud_not_applicable} type="cloud" /></TableCell>
                       <TableCell className="w-28"><ConfidenceBar value={r.cloud_confidence} /></TableCell>
-                      <TableCell><ProviderBadge name={r.ai_display} type="ai" /></TableCell>
+                      <TableCell><ProviderBadge name={r.ai_primary_provider} isMulti={r.ai_is_multi} providers={r.ai_providers} isNotApplicable={r.ai_not_applicable} type="ai" /></TableCell>
                       <TableCell className="text-gray-500 text-sm">{r.announcement_date}</TableCell>
                     </TableRow>
                   ))}

@@ -1,10 +1,18 @@
 /**
  * ProviderBadge — coloured chip for cloud and AI provider names.
  * Handles single providers, multi-cloud strings, "Unknown", and "Not Applicable".
+ *
+ * Cloud display rules:
+ *  - Multi-cloud (isMulti=true)   → single "Multi-Cloud (AWS, GCP)" badge
+ *  - Non-major single cloud       → "Other (CoreWeave)" badge  (major = AWS, GCP, Azure)
+ *  - Major single cloud           → coloured badge as-is
  */
 
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+
+/** Tier-1 hyperscalers — everything else is shown as "Other (...)" */
+const MAJOR_CLOUD_PROVIDERS = new Set(["AWS", "GCP", "Azure"]);
 
 const CLOUD_COLORS: Record<string, string> = {
   AWS:            "bg-orange-100 text-orange-800 border-orange-200",
@@ -56,19 +64,13 @@ export function ProviderBadge({
     );
   }
 
+  // Multi-cloud: render a single "Multi-Cloud (AWS, GCP)" badge
   if (isMulti && providers.length > 0) {
+    const providerList = providers.join(", ");
     return (
-      <div className={cn("flex flex-wrap gap-1", className)}>
-        {providers.map((p) => (
-          <Badge
-            key={p}
-            variant="outline"
-            className={colorMap[p] ?? "bg-gray-100 text-gray-700 border-gray-200"}
-          >
-            {p}
-          </Badge>
-        ))}
-      </div>
+      <Badge variant="outline" className={cn("bg-gray-100 text-gray-700 border-gray-300", className)}>
+        Multi-Cloud ({providerList})
+      </Badge>
     );
   }
 
@@ -76,6 +78,16 @@ export function ProviderBadge({
     return (
       <Badge variant="outline" className={cn("text-gray-400 border-gray-200", className)}>
         Unknown
+      </Badge>
+    );
+  }
+
+  // For cloud type: non-major providers are labelled "Other (name)"
+  if (type === "cloud" && !MAJOR_CLOUD_PROVIDERS.has(name)) {
+    const colorClass = colorMap[name] ?? "bg-gray-100 text-gray-700 border-gray-200";
+    return (
+      <Badge variant="outline" className={cn(colorClass, className)}>
+        Other ({name})
       </Badge>
     );
   }
