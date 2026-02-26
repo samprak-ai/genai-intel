@@ -235,6 +235,7 @@ SELECT
 FROM funding_events f
 JOIN startups s ON f.startup_id = s.id
 LEFT JOIN latest_attributions la ON s.id = la.id
+WHERE f.funding_amount_usd >= 10
 ORDER BY f.announcement_date DESC
 LIMIT 50;
 
