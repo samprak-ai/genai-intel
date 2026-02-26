@@ -633,6 +633,12 @@ class AttributionEngine:
         if content_signals:
             print(f"    ✅ Website content: {len(content_signals)} signals")
 
+        # Blog post deep-scan (RSS/sitemap → fetch relevant posts → STRONG signals)
+        blog_signals = self._check_blog_posts(company_name, canonical)
+        all_signals.extend(blog_signals)
+        if blog_signals:
+            print(f"    ✅ Blog posts: {len(blog_signals)} signals")
+
         # security.txt
         security_signals = self._check_security_txt(canonical)
         all_signals.extend(security_signals)
@@ -2065,6 +2071,143 @@ JSON:"""
                 except Exception:
                     continue
 
+        return signals
+
+    def _check_blog_posts(self, company_name: str, website: str) -> List[AttributionSignal]:
+        """
+        Discover and scan company blog posts for cloud/AI provider signals.
+
+        Strategy:
+        1. Try RSS/Atom feed (most reliable — gives titles, dates, URLs)
+           Paths tried: /feed, /rss, /blog/feed, /feed.xml, /atom.xml, /blog/rss.xml
+        2. Try blog sitemap (XML sitemap scoped to /blog)
+           Paths tried: /sitemap.xml, /blog-sitemap.xml, /sitemap-blog.xml
+
+        For each post discovered:
+        - Check if title or excerpt contains a cloud/AI provider keyword
+        - Only fetch the full post URL if it looks relevant (avoids scanning every post)
+        - Pass matching URLs through _check_evidence_urls() (STRONG signals, weight 1.0)
+
+        Posts are treated as STRONG signals because they are first-person engineering
+        content — equivalent to a partnership declaration (e.g. "Reducing AWS Costs by
+        $150k: our Kubernetes workloads on EKS").
+        """
+        import feedparser
+
+        signals = []
+        post_urls_to_fetch: List[str] = []
+
+        # Provider keywords to match in RSS titles/excerpts (specific)
+        title_keywords = [
+            'aws', 'amazon web services', 'amazon',
+            'gcp', 'google cloud',
+            'azure', 'microsoft azure',
+            'openai', 'anthropic', 'vertex', 'gemini',
+            'cloudfront', 'eks', 'ec2', 's3', 'lambda',
+            'kubernetes', 'k8s',          # often co-occur with provider names
+            'coreweave', 'lambda labs',
+        ]
+
+        # Slug keywords for sitemap fallback — broader set catches infra/engineering posts
+        # (slug = URL path, so words are hyphenated; "cost-optim" catches "cost-optimization")
+        slug_keywords = title_keywords + [
+            'cost-optim', 'infrastructure', 'architect', 'engineer',
+            'scaling', 'scale', 'deploy', 'devops', 'cloud', 'hosting',
+            'performance', 'latency', 'reliability', 'migration',
+        ]
+
+        # --- Step 1: RSS/Atom feed ---
+        feed_paths = ['/feed', '/rss', '/blog/feed', '/feed.xml',
+                      '/atom.xml', '/blog/rss.xml', '/blog/feed.xml']
+        for path in feed_paths:
+            url = f'https://{website}{path}'
+            try:
+                r = requests.get(url, timeout=self.TIMEOUT,
+                                 headers=self.HEADERS, verify=False)
+                if r.status_code != 200:
+                    continue
+                feed = feedparser.parse(r.content)
+                if not feed.entries:
+                    continue
+                print(f'    📰 Blog RSS found: {url} ({len(feed.entries)} posts)')
+                for entry in feed.entries[:20]:      # cap at 20 most recent
+                    title   = (entry.get('title', '') or '').lower()
+                    summary = (entry.get('summary', '') or '').lower()
+                    link    = entry.get('link', '') or ''
+                    if not link:
+                        continue
+                    if any(kw in title or kw in summary for kw in title_keywords):
+                        post_urls_to_fetch.append(link)
+                break  # stop at first working feed
+            except Exception:
+                continue
+
+        # --- Step 2: Sitemap fallback (if no RSS) ---
+        if not post_urls_to_fetch:
+            sitemap_paths = ['/sitemap.xml', '/blog-sitemap.xml', '/sitemap-blog.xml']
+            for path in sitemap_paths:
+                url = f'https://{website}{path}'
+                try:
+                    r = requests.get(url, timeout=self.TIMEOUT,
+                                     headers=self.HEADERS, verify=False)
+                    if r.status_code != 200:
+                        continue
+                    # Extract <url> blocks to get both <loc> and <lastmod>
+                    import re as _re
+                    # Parse full <url>...</url> blocks so we can pair loc with lastmod
+                    url_blocks = _re.findall(
+                        r'<url>(.*?)</url>', r.text, _re.IGNORECASE | _re.DOTALL
+                    )
+                    blog_entries = []  # list of (lastmod, loc)
+                    for block in url_blocks:
+                        loc_m = _re.search(r'<loc>\s*(https?://[^<\s]+)\s*</loc>', block, _re.IGNORECASE)
+                        if not loc_m:
+                            continue
+                        loc = loc_m.group(1).strip()
+                        if '/blog/' not in loc:
+                            continue
+                        lastmod_m = _re.search(r'<lastmod>\s*([^<\s]+)\s*</lastmod>', block, _re.IGNORECASE)
+                        lastmod = lastmod_m.group(1).strip() if lastmod_m else '0000-00-00'
+                        blog_entries.append((lastmod, loc))
+
+                    if not blog_entries:
+                        continue
+
+                    # Sort newest-first by lastmod date string (ISO format sorts correctly)
+                    blog_entries.sort(key=lambda x: x[0], reverse=True)
+                    blog_locs_sorted = [loc for _, loc in blog_entries]
+
+                    # Tier 1: slug contains provider/infra keyword (check all)
+                    slug_matched = [
+                        loc for loc in blog_locs_sorted
+                        if any(kw in loc.lower() for kw in slug_keywords)
+                    ]
+                    if slug_matched:
+                        selected = slug_matched[:15]
+                        print(f'    📰 Blog sitemap: {len(slug_matched)} slug-matched post(s)')
+                    else:
+                        # Tier 2: no slug keyword — sample the 10 most recently updated posts
+                        selected = blog_locs_sorted[:10]
+                        print(f'    📰 Blog sitemap: sampling {len(selected)} recent posts (no slug match)')
+                    for loc in selected:
+                        post_urls_to_fetch.append(loc)
+                    break
+                except Exception:
+                    continue
+
+        if not post_urls_to_fetch:
+            return signals
+
+        # --- Step 3: Fetch and scan relevant posts ---
+        unique_urls = list(dict.fromkeys(post_urls_to_fetch))  # deduplicate, preserve order
+        print(f'    📰 Scanning {len(unique_urls)} relevant blog post(s)')
+        blog_signals = self._check_evidence_urls(company_name, unique_urls)
+
+        # Re-label source from 'evidence_url' → 'tech_blog' for transparency
+        for sig in blog_signals:
+            sig.signal_source = 'tech_blog'
+
+        signals.extend(blog_signals)
         return signals
 
     def _check_security_txt(self, website: str) -> List[AttributionSignal]:
