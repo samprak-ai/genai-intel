@@ -725,12 +725,17 @@ class AttributionEngine:
         # --- Decide: single provider vs multi ---
         if len(ranked) == 1:
             winner = provider_entries[0]
+            # Scale confidence by raw_score so weak signals don't show 100%.
+            # Ceiling is raw_score=2.0 (STRONG entrenchment threshold) → 100%.
+            # Examples: ip_asn only (0.3) → 15%, 1 job posting (0.6) → 30%,
+            #           1 partnership page (1.0) → 50%, 2 strong signals (2.0) → 100%.
+            scaled_confidence = round(min(winner.raw_score / 2.0, 1.0), 2)
             return Attribution(
                 provider_type=provider_type,
                 is_multi=False,
                 primary_provider=winner.provider_name,
                 providers=provider_entries,
-                confidence=1.0,
+                confidence=scaled_confidence,
                 evidence_count=len(signals),
                 signals=signals
             )
