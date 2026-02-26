@@ -10,6 +10,7 @@ from typing import Optional
 from urllib.parse import urlparse
 import anthropic
 import os
+from bs4 import BeautifulSoup
 
 
 class DomainResolver:
@@ -20,6 +21,39 @@ class DomainResolver:
     """
     
     HEADERS = {'User-Agent': 'Mozilla/5.0'}
+
+    # Domains to skip when scanning article hyperlinks — news sites, social,
+    # investor/aggregator pages that should never be the startup's own domain.
+    ARTICLE_SKIP_DOMAINS = {
+        # Social media
+        'twitter.com', 'x.com', 'linkedin.com', 'facebook.com',
+        'instagram.com', 'youtube.com', 'tiktok.com',
+        # Tech / startup press
+        'techcrunch.com', 'venturebeat.com', 'siliconangle.com',
+        'theverge.com', 'engadget.com', 'arstechnica.com',
+        'wired.com', 'fastcompany.com', 'inc.com',
+        # General / business press
+        'forbes.com', 'reuters.com', 'bloomberg.com', 'wsj.com',
+        'nytimes.com', 'washingtonpost.com', 'theguardian.com',
+        'businessinsider.com', 'cnbc.com', 'axios.com', 'fortune.com',
+        'economist.com', 'ft.com', 'apnews.com', 'bbc.com', 'bbc.co.uk',
+        'time.com', 'newsweek.com', 'theatlantic.com',
+        # PR / press release
+        'finsmes.com', 'globenewswire.com', 'prnewswire.com', 'businesswire.com',
+        'prweb.com', 'accesswire.com', 'adweek.com', 'citybiz.co',
+        # VC / aggregator
+        'a16z.com', 'sequoiacap.com', 'accel.com', 'kleinerperkins.com',
+        'greylock.com', 'lightspeedvp.com', 'crunchbase.com',
+        'pitchbook.com', 'dealroom.co', 'tracxn.com',
+        # Other
+        'medium.com', 'substack.com', 'notion.so', 'docs.google.com',
+        'google.com', 'bing.com', 'yahoo.com',
+        # Cookie consent / legal
+        'onetrust.com', 'cookielaw.org',
+    }
+
+    # Common startup domain prefixes — tryprofound.com, getbasis.ai, usepepper.com
+    STARTUP_PREFIXES = ('try', 'get', 'use', 'go', 'meet', 'join', 'run', 'with')
 
     def __init__(self):
         self.anthropic_client = anthropic.Anthropic(
@@ -90,6 +124,12 @@ class DomainResolver:
         domain = self._dns_guessing(company_name)
         if domain:
             print(f"  ✅ Found via DNS: {domain}")
+            return self._canonical_domain(domain)
+
+        # Stage 2.5: Article-link search — scan funding announcement hyperlinks
+        domain = self._article_link_search(company_name)
+        if domain:
+            print(f"  ✅ Found via article links: {domain}")
             return self._canonical_domain(domain)
 
         # Stage 3: AI web search with full context (last resort)
@@ -227,6 +267,178 @@ class DomainResolver:
                 if self._name_appears_on_homepage(candidate, company_name):
                     return candidate
                 # DNS resolves but company name not found — wrong company, skip
+
+        return None
+
+    def _article_link_search(self, company_name: str) -> Optional[str]:
+        """
+        Stage 2.5: Scan funding announcement articles for the startup's own hyperlink.
+
+        A human solving this looks at 2-3 funding articles and follows the href —
+        the startup's domain usually appears as an anchor link in the article body
+        (e.g. <a href="https://www.tryprofound.com/">Profound</a>).
+
+        Algorithm:
+        1. Brave Search: "{company_name}" startup funding → top 5 results
+        2. Drop ARTICLE_SKIP_DOMAINS → take first 3 usable article URLs
+        3. For each article: fetch → parse with BeautifulSoup
+        4. For each <a href> in the article:
+           - anchor signal (+1): anchor text contains the company name
+           - pattern signal (+1): domain matches try/get/use{name} or {name}.ai
+           - freq  (+1 per occurrence): fallback for bare links without anchor text
+        5. Require anchor>=1 OR pattern>=1 OR freq>=2, then validate via
+           _test_domain_exists() + _name_appears_on_homepage()
+        6. Return first that passes, else None (Stage 3 AI search takes over)
+        """
+        brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
+        if not brave_key:
+            print('  ⚠️  Stage 2.5: BRAVE_SEARCH_API_KEY not set — skipping article-link search')
+            return None
+
+        name_lower = company_name.lower()
+        name_slug = name_lower.replace(' ', '')
+
+        # --- Step 1: Brave search for funding articles ---
+        query = f'"{company_name}" startup funding'
+        try:
+            resp = requests.get(
+                'https://api.search.brave.com/res/v1/web/search',
+                params={'q': query, 'count': 5, 'text_decorations': False},
+                headers={
+                    'Accept': 'application/json',
+                    'Accept-Encoding': 'gzip',
+                    'X-Subscription-Token': brave_key,
+                },
+                timeout=8,
+            )
+            if resp.status_code != 200:
+                return None
+            results = resp.json().get('web', {}).get('results', [])
+        except Exception:
+            return None
+
+        # --- Step 2: Filter article URLs; also score result domains directly ---
+        # A Brave result whose URL apex is the startup's own site (e.g. tryprofound.com/blog)
+        # is a direct hit — score it before fetching any articles.
+        article_urls = []
+        direct_scores: dict[str, dict] = {}
+
+        for r in results:
+            url = r.get('url', '')
+            if not url:
+                continue
+            host = urlparse(url).netloc.lower().replace('www.', '')
+            apex = self._apex_domain(host)
+
+            if apex in self.ARTICLE_SKIP_DOMAINS:
+                continue
+
+            # Score the result domain itself using the page title as "anchor text"
+            title = (r.get('title', '') + ' ' + r.get('description', '')).lower()
+            if apex not in direct_scores:
+                direct_scores[apex] = {'anchor': 0, 'pattern': 0, 'freq': 0}
+            direct_scores[apex]['freq'] += 1
+            if name_slug in title or name_lower in title:
+                direct_scores[apex]['anchor'] += 1
+            domain_stem = apex.split('.')[0]
+            for prefix in self.STARTUP_PREFIXES:
+                if domain_stem == f'{prefix}{name_slug}':
+                    direct_scores[apex]['pattern'] += 1
+                    break
+            else:
+                if domain_stem == name_slug and apex.split('.')[-1] in ('ai', 'io'):
+                    direct_scores[apex]['pattern'] += 1
+
+            article_urls.append(url)
+            if len(article_urls) >= 3:
+                break
+
+        # Check direct result domains first (fast path — no article fetching needed)
+        ranked_direct = sorted(direct_scores.items(),
+                               key=lambda x: (x[1]['anchor'], x[1]['pattern'], x[1]['freq']),
+                               reverse=True)
+        for apex, s in ranked_direct:
+            if s['anchor'] < 1 and s['pattern'] < 1 and s['freq'] < 2:
+                continue
+            if self._test_domain_exists(apex) and self._name_appears_on_homepage(apex, company_name):
+                print(f'  ✅  Stage 2.5 resolved via direct result: {apex}')
+                return apex
+
+        if not article_urls:
+            return None
+
+        # --- Step 3 & 4: Fetch articles, score candidate domains ---
+        # scores[apex_domain] = {'anchor': int, 'pattern': int, 'freq': int}
+        scores: dict[str, dict] = {}
+
+        for article_url in article_urls:
+            try:
+                ar = requests.get(
+                    article_url, timeout=6,
+                    headers=self.HEADERS, allow_redirects=True, verify=False,
+                )
+                soup = BeautifulSoup(ar.text, 'html.parser')
+            except Exception:
+                continue
+
+            article_apex = self._apex_domain(urlparse(article_url).netloc.lower())
+
+            for tag in soup.find_all('a', href=True):
+                href = tag.get('href', '')
+                if not href.startswith('http'):
+                    continue
+                parsed = urlparse(href)
+                host = parsed.netloc.lower().replace('www.', '')
+                apex = self._apex_domain(host)
+
+                # Skip the article's own domain, social/news/VC aggregators, invalid domains
+                if apex == article_apex:
+                    continue
+                if apex in self.ARTICLE_SKIP_DOMAINS:
+                    continue
+                if not self._is_valid_domain(apex):
+                    continue
+
+                if apex not in scores:
+                    scores[apex] = {'anchor': 0, 'pattern': 0, 'freq': 0}
+
+                scores[apex]['freq'] += 1
+
+                # Anchor signal: anchor text contains the company name
+                anchor_text = tag.get_text(strip=True).lower()
+                if name_slug in anchor_text or name_lower in anchor_text:
+                    scores[apex]['anchor'] += 1
+
+                # Pattern signal: try{name}.*, get{name}.*, {name}.ai, etc.
+                domain_stem = apex.split('.')[0]  # e.g. "tryprofound" from tryprofound.com
+                for prefix in self.STARTUP_PREFIXES:
+                    if domain_stem == f'{prefix}{name_slug}':
+                        scores[apex]['pattern'] += 1
+                        break
+                else:
+                    # Also match {name}.ai / {name}.io without a prefix
+                    if domain_stem == name_slug and apex.split('.')[-1] in ('ai', 'io'):
+                        scores[apex]['pattern'] += 1
+
+        if not scores:
+            return None
+
+        # --- Step 5: Rank candidates ---
+        def rank_key(item):
+            d, s = item
+            return (s['anchor'], s['pattern'], s['freq'])
+
+        ranked = sorted(scores.items(), key=rank_key, reverse=True)
+        print(f'  🔗  Stage 2.5 candidates: {[(d, s) for d, s in ranked[:5]]}')
+
+        # --- Step 6: Validate top candidates ---
+        for apex, s in ranked:
+            # Require at least one strong signal to avoid random noise
+            if s['anchor'] < 1 and s['pattern'] < 1 and s['freq'] < 2:
+                continue
+            if self._test_domain_exists(apex) and self._name_appears_on_homepage(apex, company_name):
+                print(f'  ✅  Stage 2.5 resolved via article links: {apex}')
+                return apex
 
         return None
 
