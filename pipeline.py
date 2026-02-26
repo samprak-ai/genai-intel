@@ -312,7 +312,21 @@ class Pipeline:
 
         results = []
         attributed_count = 0
-        evidence_url_map = evidence_url_map or {}
+        evidence_url_map = dict(evidence_url_map or {})  # mutable copy
+
+        # Enrich evidence_url_map from manual_overrides stored in DB.
+        # This ensures URLs saved via the dashboard or scripts persist across
+        # all future runs (cron, manual, re-attribution) without needing to
+        # pass them explicitly every time.
+        if self.db:
+            for event in attributable:
+                startup_row = self.db.get_startup_by_website(event.website or '')
+                if startup_row:
+                    override = self.db.get_manual_override(startup_row['id'])
+                    if override and override.get('evidence_urls'):
+                        existing = evidence_url_map.get(event.company_name, [])
+                        merged = list(dict.fromkeys(existing + override['evidence_urls']))
+                        evidence_url_map[event.company_name] = merged
 
         for i, event in enumerate(attributable, 1):
             print(f"\n  [{i}/{len(attributable)}] {event.company_name} ({event.website})")

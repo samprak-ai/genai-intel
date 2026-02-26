@@ -188,11 +188,13 @@ class SubprocessorsParser:
             if not self._looks_like_subprocessors_page(html):
                 continue
 
-            print(f"    ✅ Found subprocessors page: {url}")
-
             entries = self._extract_entries(html)
             if not entries:
+                # Looks like subprocessors page (keywords match) but no parseable
+                # table/card/list found — likely a client-side rendered SPA
                 continue
+
+            print(f"    ✅ Found subprocessors page: {url}")
 
             signals = self._entries_to_signals(entries, url)
 
