@@ -429,9 +429,10 @@ Return ONLY valid JSON, no explanation."""
                 print(f"    ⚠️  Skipped (company name not identified)")
                 return None
 
-            # Issue 6: Reject sub-$100K amounts (0.1 = $100K, amounts in millions)
+            # Issue 6: Reject rounds below $10M — too small to be signal-relevant
+            # (amounts are stored in millions: 10 = $10M, 0.1 = $100K)
             amount = data.get('funding_amount_usd')
-            if not amount or float(amount) < 0.1:
+            if not amount or float(amount) < 10:
                 return None
 
             return FundingEvent(
@@ -472,7 +473,7 @@ Return ONLY valid JSON, no explanation."""
                 if not company_name or company_name.strip().lower() in ('unknown', 'n/a', 'tbd', ''):
                     return None
                 amount = data.get('funding_amount_usd')
-                if not amount or float(amount) < 0.1:
+                if not amount or float(amount) < 10:
                     return None
                 return FundingEvent(
                     company_name=company_name,

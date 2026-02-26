@@ -190,6 +190,13 @@ SELECT DISTINCT ON (s.id)
     a.snapshot_date,
     a.created_at
 FROM startups s
+INNER JOIN (
+    -- Only include startups whose largest funding round is >= $10M
+    SELECT startup_id, MAX(funding_amount_usd) AS max_funding_usd
+    FROM funding_events
+    GROUP BY startup_id
+    HAVING MAX(funding_amount_usd) >= 10
+) mf ON s.id = mf.startup_id
 LEFT JOIN attribution_snapshots a ON s.id = a.startup_id
 ORDER BY s.id, a.snapshot_date DESC NULLS LAST;
 

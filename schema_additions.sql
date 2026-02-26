@@ -107,6 +107,9 @@ ALTER TABLE attribution_snapshots
 DROP VIEW IF EXISTS latest_attributions CASCADE;
 
 -- 1. Recreate base view with new enrichment + not-applicable columns
+--    Only includes startups whose largest funding round is >= $10M.
+--    The INNER JOIN on max_funding acts as the gate: startups with no
+--    funding_events row, or whose best round is below threshold, are excluded.
 CREATE VIEW latest_attributions AS
 SELECT DISTINCT ON (s.id)
     s.id,
@@ -137,6 +140,13 @@ SELECT DISTINCT ON (s.id)
     a.snapshot_date,
     a.created_at
 FROM startups s
+INNER JOIN (
+    -- Subquery: one row per startup, keeping only those with max round >= $10M
+    SELECT startup_id, MAX(funding_amount_usd) AS max_funding_usd
+    FROM funding_events
+    GROUP BY startup_id
+    HAVING MAX(funding_amount_usd) >= 10
+) mf ON s.id = mf.startup_id
 LEFT JOIN attribution_snapshots a ON s.id = a.startup_id
 ORDER BY s.id, a.snapshot_date DESC NULLS LAST;
 
