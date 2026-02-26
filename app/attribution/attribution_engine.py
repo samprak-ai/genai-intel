@@ -2078,9 +2078,12 @@ JSON:"""
         Discover and scan company blog posts for cloud/AI provider signals.
 
         Strategy:
-        1. Try RSS/Atom feed (most reliable — gives titles, dates, URLs)
+        0. Brave Search API (most powerful — finds indexed posts Google/Brave know
+           about even if they're not in the company's own sitemap/RSS)
+           Query: "<company> site:domain.com aws OR kubernetes OR ..."
+        1. RSS/Atom feed (reliable for WordPress/Ghost/Substack blogs)
            Paths tried: /feed, /rss, /blog/feed, /feed.xml, /atom.xml, /blog/rss.xml
-        2. Try blog sitemap (XML sitemap scoped to /blog)
+        2. XML sitemap (fallback — extracts /blog/ URLs sorted newest-first by lastmod)
            Paths tried: /sitemap.xml, /blog-sitemap.xml, /sitemap-blog.xml
 
         For each post discovered:
@@ -2096,6 +2099,7 @@ JSON:"""
 
         signals = []
         post_urls_to_fetch: List[str] = []
+        brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
 
         # Provider keywords to match in RSS titles/excerpts (specific)
         title_keywords = [
@@ -2115,6 +2119,41 @@ JSON:"""
             'scaling', 'scale', 'deploy', 'devops', 'cloud', 'hosting',
             'performance', 'latency', 'reliability', 'migration',
         ]
+
+        # --- Step 0: Brave Search API ---
+        # Finds indexed blog posts that the company's own RSS/sitemap may miss.
+        # Query combines company name + domain + provider terms so results are
+        # scoped to this company's content (Brave doesn't support site: well,
+        # but name+domain together is specific enough).
+        if brave_key:
+            try:
+                apex = website.lstrip('www.')  # xflowpay.com
+                brave_q = (
+                    f'"{company_name}" {apex} '
+                    f'aws OR "amazon web services" OR "google cloud" OR azure '
+                    f'OR openai OR anthropic OR kubernetes OR eks OR "machine learning"'
+                )
+                brave_r = requests.get(
+                    'https://api.search.brave.com/res/v1/web/search',
+                    params={'q': brave_q, 'count': 10, 'search_lang': 'en'},
+                    headers={
+                        'Accept': 'application/json',
+                        'Accept-Encoding': 'gzip',
+                        'X-Subscription-Token': brave_key,
+                    },
+                    timeout=self.TIMEOUT,
+                )
+                if brave_r.status_code == 200:
+                    brave_results = brave_r.json().get('web', {}).get('results', [])
+                    matched = [
+                        res['url'] for res in brave_results
+                        if apex in res.get('url', '')       # must be on this domain
+                    ]
+                    if matched:
+                        print(f'    🔍 Brave Search: {len(matched)} blog post(s) found')
+                        post_urls_to_fetch.extend(matched)
+            except Exception:
+                pass
 
         # --- Step 1: RSS/Atom feed ---
         feed_paths = ['/feed', '/rss', '/blog/feed', '/feed.xml',
