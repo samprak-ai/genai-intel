@@ -376,32 +376,39 @@ explanation. If you cannot confidently identify the correct domain, return: NOT_
     def _is_valid_domain(self, domain: str) -> bool:
         """
         Validate domain format and reject unwanted domains
-        
+
         Rules:
-        - Must match domain pattern (word.tld)
-        - Cannot be social media or aggregator
-        - Must be root domain (not subdomain)
+        - Must match domain pattern (word.tld or word.co.uk style)
+        - Cannot be social media, aggregator, or parking site
+        - Must be a root/apex domain (no arbitrary subdomains)
+        - Supports new gTLDs like .group, .computer, .technology, .health, .finance
         """
-        # Basic format check — allow word.tld and word.co.uk / word.com.au style
-        if not re.match(r'^[a-z0-9-]+\.[a-z]{2,}(?:\.[a-z]{2})?$', domain.lower()):
-            return False
-        
-        # Reject unwanted domains
-        for pattern in self.reject_patterns:
-            if pattern in domain.lower():
-                return False
-        
-        # Reject common false positives
+        domain = domain.lower().strip()
+
+        # Strip www. prefix before validation
         if domain.startswith('www.'):
             domain = domain[4:]
-        
-        # Reject subdomains (must be root domain)
-        parts = domain.split('.')
-        if len(parts) > 2:
-            # Allow some exceptions like "co.uk"
-            if not (parts[-2] in ['co', 'com', 'net'] and parts[-1] in ['uk', 'au', 'nz']):
+
+        # Basic format: label(s) + dot + TLD (all alpha, 2+ chars)
+        # Also allow 2-part ccTLDs: label.co.uk, label.com.au etc.
+        if not re.match(r'^[a-z0-9][a-z0-9\-]*\.[a-z]{2,}(?:\.[a-z]{2})?$', domain):
+            return False
+
+        # Reject unwanted domains
+        for pattern in self.reject_patterns:
+            if pattern in domain:
                 return False
-        
+
+        # Reject subdomains — root domain has exactly 2 parts (or 3 for ccTLDs)
+        parts = domain.split('.')
+        if len(parts) == 3:
+            # Allow 2-part ccTLDs: co.uk, com.au, co.nz, com.br, etc.
+            if parts[-2] not in ('co', 'com', 'net', 'org', 'gov') or \
+               parts[-1] not in ('uk', 'au', 'nz', 'za', 'jp', 'in', 'br', 'mx'):
+                return False  # 3-part but not a known ccTLD → subdomain, reject
+        elif len(parts) > 3:
+            return False  # definitely a subdomain
+
         return True
     
     def verify_domain(self, domain: str) -> dict:

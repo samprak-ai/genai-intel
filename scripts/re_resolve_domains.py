@@ -42,14 +42,22 @@ from app.core.database import DatabaseClient
 # Validity check — mirrors domain_resolver._name_appears_on_homepage() logic
 # ---------------------------------------------------------------------------
 
-# Known parking / redirect-shell patterns in page content
+# Known parking / redirect-shell patterns in page content.
+# These are checked on ALL pages regardless of length.
 PARKING_SNIPPETS = [
-    'window.location.href="/lander"',   # The common parked template we've seen
-    'window.location.replace(',          # JS redirect shells
-    'sedo.com', 'godaddy.com/domain',   # Domain brokers
+    'window.location.href="/lander"',   # The parked-domain lander template we've seen
+    'sedo.com', 'godaddy.com/domain',   # Domain broker references
     'this domain is for sale',
     'domain is registered',
     'buy this domain',
+]
+
+# JS redirect patterns that are ONLY suspicious on short pages (<300 chars).
+# Legitimate SPAs (e.g. Decagon) use window.location.replace() internally —
+# flagging them on large pages produces false positives.
+SHORT_PAGE_REDIRECT_SNIPPETS = [
+    'window.location.replace(',
+    'window.location.href=',
 ]
 
 # Known bad redirect destination patterns (redirect target host contains these)
@@ -101,14 +109,19 @@ def _check_domain_validity(company_name: str, domain: str) -> tuple[bool, str]:
         if resp.status_code >= 500:
             return False, f'HTTP {resp.status_code}'
 
-        # 4. Parked / redirect shell (tiny page with JS redirect)
-        if len(content.strip()) < 300:
-            return False, f'near-empty response ({len(content)} chars)'
+        # 4. Parked / redirect shell — tiny page (possibly with JS redirect)
+        content_stripped_len = len(content.strip())
+        if content_stripped_len < 300:
+            # On short pages, also check for JS redirect patterns
+            for snippet in SHORT_PAGE_REDIRECT_SNIPPETS:
+                if snippet.lower() in content_lower:
+                    return False, f'JS redirect shell ({content_stripped_len} chars)'
+            return False, f'near-empty response ({content_stripped_len} chars)'
 
-        # 5. Known parking page snippets
+        # 5. Known parking page snippets (checked on any page length)
         for snippet in PARKING_SNIPPETS:
             if snippet.lower() in content_lower:
-                return False, f'parking/redirect shell detected'
+                return False, 'parking/redirect shell detected'
 
         # 6. Company name not in page content at all
         # (Use first 5 chars of slug as a loose check to handle variations)
