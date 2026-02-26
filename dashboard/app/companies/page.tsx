@@ -89,13 +89,15 @@ export default function CompaniesPage() {
               <TableHead><Tooltip text="How deeply integrated the provider is, based on signal strength and diversity" position="below">Entrenchment</Tooltip></TableHead>
               <TableHead>AI Provider</TableHead>
               <TableHead className="w-32"><Tooltip text="How certain we are about the AI provider attribution" position="below">Conf</Tooltip></TableHead>
+              <TableHead><Tooltip text="Largest known funding round" position="below">Funding</Tooltip></TableHead>
+              <TableHead><Tooltip text="Month the funding was announced" position="below">Announced</Tooltip></TableHead>
               <TableHead>Updated</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {loading
               ? Array.from({ length: 8 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: 8 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                  <TableRow key={i}>{Array.from({ length: 10 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                 ))
               : rows.map((r) => (
                   <TableRow key={r.id} className="hover:bg-gray-50">
@@ -114,6 +116,14 @@ export default function CompaniesPage() {
                       <ProviderBadge name={r.ai_primary_provider} isMulti={r.ai_is_multi} providers={r.ai_providers} isNotApplicable={r.ai_not_applicable} type="ai" />
                     </TableCell>
                     <TableCell><ConfidenceBar value={r.ai_confidence} isNotApplicable={r.ai_not_applicable} /></TableCell>
+                    <TableCell className="text-gray-500 text-sm">
+                      {r.funding_amount_usd != null ? `$${r.funding_amount_usd}M` : "—"}
+                    </TableCell>
+                    <TableCell className="text-gray-400 text-xs whitespace-nowrap">
+                      {r.funding_announcement_date
+                        ? new Date(r.funding_announcement_date).toLocaleDateString("en-US", { month: "short", year: "numeric" })
+                        : "—"}
+                    </TableCell>
                     <TableCell className="text-gray-400 text-xs">{r.snapshot_date ?? "—"}</TableCell>
                   </TableRow>
                 ))

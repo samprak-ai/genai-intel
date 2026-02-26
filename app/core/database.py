@@ -86,6 +86,7 @@ class DatabaseClient:
         Paginated company list from latest_attributions view.
         Supports filter by cloud/AI provider, name search, and snapshot_date range.
         date_from / date_to are inclusive ISO date strings (YYYY-MM-DD).
+        Also merges in max funding_amount_usd and announcement_date from funding_events.
         """
         query = self.client.table('latest_attributions').select('*')
 
@@ -106,7 +107,34 @@ class DatabaseClient:
             .range(offset, offset + per_page - 1) \
             .execute()
 
-        return result.data if result.data else []
+        rows = result.data if result.data else []
+        if not rows:
+            return rows
+
+        # Fetch funding data for the returned startups and merge in
+        startup_ids = [r['id'] for r in rows]
+        funding_result = self.client.table('funding_events') \
+            .select('startup_id, funding_amount_usd, announcement_date') \
+            .in_('startup_id', startup_ids) \
+            .execute()
+
+        # Build map: startup_id → (max_amount, announcement_date of that max round)
+        funding_map: dict = {}
+        for f in (funding_result.data or []):
+            sid = f['startup_id']
+            amt = f['funding_amount_usd']
+            if sid not in funding_map or amt > funding_map[sid]['funding_amount_usd']:
+                funding_map[sid] = {
+                    'funding_amount_usd': amt,
+                    'funding_announcement_date': f['announcement_date'],
+                }
+
+        for row in rows:
+            fd = funding_map.get(row['id'])
+            row['funding_amount_usd'] = fd['funding_amount_usd'] if fd else None
+            row['funding_announcement_date'] = fd['funding_announcement_date'] if fd else None
+
+        return rows
 
     # ========================================================================
     # FUNDING EVENTS

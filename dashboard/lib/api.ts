@@ -87,6 +87,9 @@ export interface StartupRow {
   ai_not_applicable?: boolean;
   ai_not_applicable_note?: string;
   snapshot_date?: string;
+  // Funding (only present for pipeline-discovered companies)
+  funding_amount_usd?: number;
+  funding_announcement_date?: string;
 }
 
 export interface Signal {
