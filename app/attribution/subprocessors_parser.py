@@ -229,16 +229,31 @@ class SubprocessorsParser:
     def _looks_like_subprocessors_page(self, html: str) -> bool:
         """
         Quick check — does this page actually contain subprocessor info?
-        Avoids false positives from generic /legal or /security pages
+        Requires BOTH a subprocessor term AND a provider name to avoid false
+        positives from generic SPA pages that embed google/amazon in asset URLs
+        (e.g. fonts.googleapis.com in every Next.js site).
+
+        We strip <link> and <script src=...> tags before checking provider names
+        so that CDN/font URLs don't count as provider matches.
         """
+        import re as _re
         lower = html.lower()
-        keywords = ["subprocessor", "sub-processor", "data processor", "third party", "third-party"]
-        provider_keywords = ["amazon", "google", "microsoft", "azure", "openai", "anthropic"]
 
+        # Must have a subprocessors-specific term in the page text
+        keywords = ["subprocessor", "sub-processor", "data processor"]
         has_subprocessor_term = any(kw in lower for kw in keywords)
-        has_provider_name = any(kw in lower for kw in provider_keywords)
+        if not has_subprocessor_term:
+            return False
 
-        return has_subprocessor_term or has_provider_name
+        # Strip link/script-src tags to avoid matching CDN URLs like fonts.googleapis.com
+        stripped = _re.sub(r'<link[^>]+>', '', html, flags=_re.IGNORECASE)
+        stripped = _re.sub(r'<script[^>]+src=[^>]+>', '', stripped, flags=_re.IGNORECASE)
+        stripped_lower = stripped.lower()
+
+        provider_keywords = ["amazon", "google", "microsoft", "azure", "openai", "anthropic"]
+        has_provider_name = any(kw in stripped_lower for kw in provider_keywords)
+
+        return has_provider_name
 
     # ========================================================================
     # ENTRY EXTRACTION
