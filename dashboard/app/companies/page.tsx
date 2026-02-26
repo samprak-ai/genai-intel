@@ -22,16 +22,26 @@ export default function CompaniesPage() {
   const [search, setSearch]   = useState("");
   const [cloud, setCloud]     = useState("all");
   const [ai, setAi]           = useState("all");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo]     = useState("");
   const [page, setPage]       = useState(1);
 
   async function load() {
     setLoading(true);
     try {
-      setRows(await getStartups({ search: search || undefined, cloud_provider: cloud === "all" ? undefined : cloud, ai_provider: ai === "all" ? undefined : ai, page, per_page: PER_PAGE }));
+      setRows(await getStartups({
+        search: search || undefined,
+        cloud_provider: cloud === "all" ? undefined : cloud,
+        ai_provider: ai === "all" ? undefined : ai,
+        date_from: dateFrom || undefined,
+        date_to: dateTo || undefined,
+        page,
+        per_page: PER_PAGE,
+      }));
     } finally { setLoading(false); }
   }
 
-  useEffect(() => { load(); }, [search, cloud, ai, page]);
+  useEffect(() => { load(); }, [search, cloud, ai, dateFrom, dateTo, page]);
 
   return (
     <div className="space-y-6">
@@ -43,7 +53,7 @@ export default function CompaniesPage() {
         <Link href="/add"><Button size="sm">+ Add Company</Button></Link>
       </div>
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap gap-3 items-center">
         <Input placeholder="Search company..." value={search} onChange={(e) => setSearch(e.target.value)} className="w-56" />
         <Select value={cloud} onValueChange={(v) => { setCloud(v); setPage(1); }}>
           <SelectTrigger className="w-36"><SelectValue placeholder="Cloud" /></SelectTrigger>
@@ -53,7 +63,19 @@ export default function CompaniesPage() {
           <SelectTrigger className="w-40"><SelectValue placeholder="AI provider" /></SelectTrigger>
           <SelectContent>{AI_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
-        <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setCloud("all"); setAi("all"); setPage(1); }}>Clear</Button>
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm text-gray-500 whitespace-nowrap">Updated</span>
+          <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="w-36 text-sm" />
+          <span className="text-sm text-gray-400">–</span>
+          <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} className="w-36 text-sm" />
+        </div>
+        <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setCloud("all"); setAi("all"); setDateFrom(""); setDateTo(""); setPage(1); }}>Clear</Button>
+      </div>
+
+      <div className="flex gap-2 justify-end">
+        <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>Previous</Button>
+        <span className="text-sm text-gray-500 self-center">Page {page}</span>
+        <Button variant="outline" size="sm" disabled={rows.length < PER_PAGE} onClick={() => setPage((p) => p + 1)}>Next</Button>
       </div>
 
       <div className="rounded-lg border bg-white overflow-hidden">
@@ -98,12 +120,6 @@ export default function CompaniesPage() {
             }
           </TableBody>
         </Table>
-      </div>
-
-      <div className="flex gap-2 justify-end">
-        <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>Previous</Button>
-        <span className="text-sm text-gray-500 self-center">Page {page}</span>
-        <Button variant="outline" size="sm" disabled={rows.length < PER_PAGE} onClick={() => setPage((p) => p + 1)}>Next</Button>
       </div>
     </div>
   );

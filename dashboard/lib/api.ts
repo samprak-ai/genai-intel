@@ -136,6 +136,8 @@ export const getStartups = (params?: {
   cloud_provider?: string;
   ai_provider?: string;
   search?: string;
+  date_from?: string;
+  date_to?: string;
   page?: number;
   per_page?: number;
 }) => {
@@ -143,6 +145,8 @@ export const getStartups = (params?: {
   if (params?.cloud_provider) qs.set("cloud_provider", params.cloud_provider);
   if (params?.ai_provider) qs.set("ai_provider", params.ai_provider);
   if (params?.search) qs.set("search", params.search);
+  if (params?.date_from) qs.set("date_from", params.date_from);
+  if (params?.date_to) qs.set("date_to", params.date_to);
   if (params?.page) qs.set("page", String(params.page));
   if (params?.per_page) qs.set("per_page", String(params.per_page));
   const query = qs.toString() ? `?${qs}` : "";

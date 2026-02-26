@@ -11,10 +11,10 @@ import type { PieLabelRenderProps } from "recharts";
 import { ProviderDistribution } from "@/lib/api";
 
 const CLOUD_PALETTE: Record<string, string> = {
-  AWS:       "#FF9900",
-  GCP:       "#4285F4",
-  Azure:     "#0089D6",
-  CoreWeave: "#7C3AED",
+  AWS:       "#F97316",  // orange
+  GCP:       "#22C55E",  // green
+  Azure:     "#3B82F6",  // blue
+  CoreWeave: "#7C3AED",  // purple
 };
 
 const AI_PALETTE: Record<string, string> = {
@@ -75,8 +75,7 @@ export function DistributionChart({ data, type }: Props) {
           nameKey="provider"
           cx="50%"
           cy="46%"
-          innerRadius={52}
-          outerRadius={78}
+          outerRadius={90}
           paddingAngle={2}
           label={renderLabel}
           labelLine={false}
@@ -84,7 +83,7 @@ export function DistributionChart({ data, type }: Props) {
           {data.map((entry) => (
             <Cell
               key={entry.provider}
-              fill={palette[entry.provider] ?? "#94A3B8"}
+              fill={palette[entry.provider] ?? "#9CA3AF"}
             />
           ))}
         </Pie>

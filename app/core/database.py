@@ -77,12 +77,15 @@ class DatabaseClient:
         cloud_provider: Optional[str] = None,
         ai_provider: Optional[str] = None,
         search: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
         page: int = 1,
         per_page: int = 50,
     ) -> list[dict]:
         """
         Paginated company list from latest_attributions view.
-        Supports filter by cloud/AI provider and name search.
+        Supports filter by cloud/AI provider, name search, and snapshot_date range.
+        date_from / date_to are inclusive ISO date strings (YYYY-MM-DD).
         """
         query = self.client.table('latest_attributions').select('*')
 
@@ -92,6 +95,10 @@ class DatabaseClient:
             query = query.contains('ai_providers', [ai_provider])
         if search:
             query = query.ilike('canonical_name', f'%{search}%')
+        if date_from:
+            query = query.gte('snapshot_date', date_from)
+        if date_to:
+            query = query.lte('snapshot_date', date_to)
 
         offset = (page - 1) * per_page
         result = query \

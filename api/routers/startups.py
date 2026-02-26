@@ -49,6 +49,8 @@ def list_startups(
     cloud_provider: Optional[str] = Query(None, description="Filter by cloud provider e.g. AWS"),
     ai_provider: Optional[str] = Query(None, description="Filter by AI provider e.g. OpenAI"),
     search: Optional[str] = Query(None, description="Fuzzy search on company name"),
+    date_from: Optional[str] = Query(None, description="Filter snapshot_date >= this date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Filter snapshot_date <= this date (YYYY-MM-DD)"),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
     db: DatabaseClient = Depends(get_db),
@@ -58,6 +60,8 @@ def list_startups(
         cloud_provider=cloud_provider,
         ai_provider=ai_provider,
         search=search,
+        date_from=date_from,
+        date_to=date_to,
         page=page,
         per_page=per_page,
     )
