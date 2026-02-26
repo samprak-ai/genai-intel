@@ -83,7 +83,7 @@ export default async function DashboardPage() {
                       <TableCell><ProviderBadge name={r.cloud_primary_provider} isMulti={r.cloud_is_multi} providers={r.cloud_providers} isNotApplicable={r.cloud_not_applicable} type="cloud" /></TableCell>
                       <TableCell className="w-28"><ConfidenceBar value={r.cloud_confidence} /></TableCell>
                       <TableCell><ProviderBadge name={r.ai_primary_provider} isMulti={r.ai_is_multi} providers={r.ai_providers} isNotApplicable={r.ai_not_applicable} type="ai" /></TableCell>
-                      <TableCell className="text-gray-500 text-sm">{r.announcement_date}</TableCell>
+                      <TableCell className="text-gray-500 text-sm">{r.announcement_date ? new Date(r.announcement_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' }) : '—'}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
