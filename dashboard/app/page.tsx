@@ -19,8 +19,8 @@ export default async function DashboardPage() {
 
   const cloudDist = summary.cloud_distribution ?? [];
   const aiDist    = summary.ai_distribution ?? [];
-  const topCloud  = cloudDist[0];
-  const topAI     = aiDist[0];
+  const topCloud  = cloudDist.find(r => r.provider !== "Unknown");
+  const topAI     = aiDist.find(r => r.provider !== "Unknown");
   const total     = summary.total_companies || cloudDist.reduce((s, r) => s + r.startup_count, 0);
 
   return (
