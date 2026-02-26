@@ -64,12 +64,17 @@ export function ProviderBadge({
     );
   }
 
-  // Multi-cloud: render a single "Multi-Cloud (AWS, GCP)" badge
+  // Multi-provider: render a single consolidated badge
+  //   cloud → "Multi-Cloud (AWS, GCP)"
+  //   ai    → "Multi-Provider (Anthropic, OpenAI)"
   if (isMulti && providers.length > 0) {
     const providerList = providers.join(", ");
+    const label = type === "cloud"
+      ? `Multi-Cloud (${providerList})`
+      : `Multi-Provider (${providerList})`;
     return (
       <Badge variant="outline" className={cn("bg-gray-100 text-gray-700 border-gray-300", className)}>
-        Multi-Cloud ({providerList})
+        {label}
       </Badge>
     );
   }

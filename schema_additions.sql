@@ -153,31 +153,42 @@ WHERE mf.startup_id IS NULL OR mf.max_funding_usd >= 10
 ORDER BY s.id, a.snapshot_date DESC NULLS LAST;
 
 -- 2. Recreate cloud_provider_distribution
+--    One row per startup — multi-cloud startups count as a single "Multi-Cloud" slice.
+--    Major providers (AWS, GCP, Azure) are named directly; everything else → "Other".
 CREATE OR REPLACE VIEW cloud_provider_distribution AS
 SELECT
-    provider,
-    COUNT(*) as startup_count,
-    SUM(CASE WHEN cloud_is_multi THEN 1 ELSE 0 END) as multi_cloud_count,
-    SUM(CASE WHEN NOT cloud_is_multi THEN 1 ELSE 0 END) as sole_provider_count,
-    ROUND(AVG(cloud_confidence)::numeric, 2) as avg_confidence
+    CASE
+        WHEN cloud_is_multi                               THEN 'Multi-Cloud'
+        WHEN cloud_primary_provider IN ('AWS','GCP','Azure') THEN cloud_primary_provider
+        WHEN cloud_primary_provider IS NOT NULL           THEN 'Other'
+        ELSE 'Unknown'
+    END AS provider,
+    COUNT(*) AS startup_count,
+    ROUND(AVG(cloud_confidence)::numeric, 2) AS avg_confidence,
+    -- kept for backwards-compat; will always be 0 since multi is its own slice
+    0 AS multi_cloud_count,
+    COUNT(*) AS sole_provider_count
 FROM latest_attributions
-CROSS JOIN UNNEST(cloud_providers) AS provider
-WHERE cloud_providers IS NOT NULL
-GROUP BY provider
+WHERE cloud_providers IS NOT NULL OR cloud_primary_provider IS NOT NULL
+GROUP BY 1
 ORDER BY startup_count DESC;
 
 -- 3. Recreate ai_provider_distribution
+--    One row per startup — multi-AI startups count as a single "Multi-Provider" slice.
 CREATE OR REPLACE VIEW ai_provider_distribution AS
 SELECT
-    provider,
-    COUNT(*) as startup_count,
-    SUM(CASE WHEN ai_is_multi THEN 1 ELSE 0 END) as multi_ai_count,
-    SUM(CASE WHEN NOT ai_is_multi THEN 1 ELSE 0 END) as sole_provider_count,
-    ROUND(AVG(ai_confidence)::numeric, 2) as avg_confidence
+    CASE
+        WHEN ai_is_multi                THEN 'Multi-Provider'
+        WHEN ai_primary_provider IS NOT NULL THEN ai_primary_provider
+        ELSE 'Unknown'
+    END AS provider,
+    COUNT(*) AS startup_count,
+    ROUND(AVG(ai_confidence)::numeric, 2) AS avg_confidence,
+    0 AS multi_ai_count,
+    COUNT(*) AS sole_provider_count
 FROM latest_attributions
-CROSS JOIN UNNEST(ai_providers) AS provider
-WHERE ai_providers IS NOT NULL
-GROUP BY provider
+WHERE ai_providers IS NOT NULL OR ai_primary_provider IS NOT NULL
+GROUP BY 1
 ORDER BY startup_count DESC;
 
 -- 4. Recreate multi_cloud_combinations

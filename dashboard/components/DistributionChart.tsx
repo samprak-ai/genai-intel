@@ -11,18 +11,22 @@ import type { PieLabelRenderProps } from "recharts";
 import { ProviderDistribution } from "@/lib/api";
 
 const CLOUD_PALETTE: Record<string, string> = {
-  AWS:       "#F97316",  // orange
-  GCP:       "#22C55E",  // green
-  Azure:     "#3B82F6",  // blue
-  CoreWeave: "#7C3AED",  // purple
+  AWS:           "#F97316",  // orange
+  GCP:           "#22C55E",  // green
+  Azure:         "#3B82F6",  // blue
+  "Multi-Cloud": "#6366F1",  // indigo — mixed hyperscaler usage
+  Other:         "#9CA3AF",  // gray   — non-hyperscaler (CoreWeave etc.)
+  Unknown:       "#D1D5DB",  // light gray
 };
 
 const AI_PALETTE: Record<string, string> = {
-  Anthropic:  "#D97706",
-  OpenAI:     "#10B981",
-  "Google AI": "#4285F4",
-  Cohere:     "#7C3AED",
-  Mistral:    "#F43F5E",
+  Anthropic:        "#D97706",
+  OpenAI:           "#10B981",
+  "Google AI":      "#4285F4",
+  Cohere:           "#7C3AED",
+  Mistral:          "#F43F5E",
+  "Multi-Provider": "#6366F1",  // indigo — mixed AI usage
+  Unknown:          "#D1D5DB",
 };
 
 interface Props {
