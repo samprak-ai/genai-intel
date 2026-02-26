@@ -56,12 +56,24 @@ AI_PROVIDERS = {
     "aws bedrock": "AWS Bedrock",
     "amazon bedrock": "AWS Bedrock",
     "amazon web services": "AWS Bedrock",  # When listed as AI provider
+    "aws": "AWS Bedrock",                  # Plain "AWS" when listed as AI provider
+    "amazon": "AWS Bedrock",               # Plain "Amazon" when listed as AI provider
+    "sagemaker": "AWS SageMaker",          # AWS ML platform listed directly
     "azure openai": "Azure OpenAI",
     "microsoft azure": "Azure OpenAI",     # When listed as AI provider
     "microsoft corp": "Azure OpenAI",      # When listed as AI provider
     "hugging face": "Hugging Face",
     "elevenlabs": "ElevenLabs",
+    "eleven labs": "ElevenLabs",           # Space-separated variant
     "perplexity": "Perplexity",
+    "stability ai": "Stability AI",
+    "stable diffusion": "Stability AI",
+    "together ai": "Together AI",
+    "together": "Together AI",
+    "groq": "Groq",
+    "replicate": "Replicate",
+    "xai": "xAI",
+    "grok": "xAI",
 }
 
 # Purpose keywords that indicate cloud infrastructure (vs AI service)
@@ -77,6 +89,11 @@ INFRASTRUCTURE_PURPOSES = [
     "storage",
     "data storage",
     "cloud storage",
+    "data processing",    # e.g. "Data processing and analytics"
+    "analytics",          # e.g. "Data processing and analytics" / "observability analytics"
+    "network",            # CDN and network infrastructure
+    "database",           # e.g. "Database hosting and management"
+    "cdn",                # Content delivery network
 ]
 
 AI_SERVICE_PURPOSES = [
@@ -89,7 +106,13 @@ AI_SERVICE_PURPOSES = [
     "ml",
     "natural language",
     "generative ai",
+    "generative",         # Catches "generative model services"
     "large language",
+    "inference",          # e.g. "Model inference and AI pipeline services"
+    "model training",     # e.g. "GPU compute for model training"
+    "training",           # e.g. "AI training workloads"
+    "foundation model",   # e.g. "Foundation model API"
+    "ai model",           # e.g. "AI model serving"
 ]
 
 # Common subprocessors page URL patterns
@@ -465,5 +488,9 @@ class SubprocessorsParser:
 
     def _is_known_ai_company(self, name_lower: str) -> bool:
         """Check if this is a known AI company even without purpose context"""
-        known_ai = ["openai", "anthropic", "cohere", "mistral", "elevenlabs", "perplexity"]
+        known_ai = [
+            "openai", "anthropic", "cohere", "mistral", "elevenlabs", "perplexity",
+            "stability ai", "together ai", "together", "groq", "replicate",
+            "xai", "hugging face",
+        ]
         return any(ai in name_lower for ai in known_ai)

@@ -38,7 +38,7 @@ class DomainResolver:
             'medium.com',
             'substack.com',
             'youtube.com',
-            # Domain parking / broker sites (Issue 2)
+            # Domain parking / broker sites
             'hugedomains.com',
             'sedo.com',
             'dan.com',
@@ -48,6 +48,17 @@ class DomainResolver:
             'undeveloped.com',
             'brandbucket.com',
             'squadhelp.com',
+            # Hosting/staging platforms — not official company domains
+            'github.io',
+            'vercel.app',
+            'netlify.app',
+            'pages.dev',
+            'surge.sh',
+            'herokuapp.com',
+            'glitch.me',
+            'replit.dev',
+            'webflow.io',
+            'framer.app',
         ]
     
     def resolve(
@@ -98,6 +109,20 @@ class DomainResolver:
         print(f"  ❌ Could not resolve domain")
         return None
     
+    # 2-part country TLDs where apex = last 3 domain labels (e.g. company.co.uk)
+    _MULTI_PART_TLDS = {'co.uk', 'co.jp', 'co.nz', 'co.za', 'co.in', 'com.au', 'com.br',
+                        'com.mx', 'org.uk', 'net.uk', 'gov.uk'}
+
+    def _apex_domain(self, netloc: str) -> str:
+        """Return the registrable apex domain, handling 2-part country TLDs."""
+        host = netloc.lower().replace('www.', '')
+        parts = host.split('.')
+        if len(parts) >= 3:
+            two_part = '.'.join(parts[-2:])
+            if two_part in self._MULTI_PART_TLDS:
+                return '.'.join(parts[-3:])
+        return '.'.join(parts[-2:]) if len(parts) >= 2 else host
+
     def _canonical_domain(self, domain: str) -> str:
         """
         Follow HTTP redirect and return the final apex domain.
@@ -115,9 +140,7 @@ class DomainResolver:
             final = urlparse(r.url).netloc.lower().replace('www.', '')
             if not final:
                 return domain
-            final_apex = '.'.join(final.split('.')[-2:])
-            orig_apex  = '.'.join(domain.split('.')[-2:])
-            if final_apex != orig_apex:
+            if self._apex_domain(final) != self._apex_domain(domain):
                 print(f"  ↪  Canonical redirect: {domain} → {final}")
                 return final
         except Exception:
@@ -142,7 +165,7 @@ class DomainResolver:
                 return match
         
         # Pattern 2: Domain-like strings
-        domain_pattern = r'\b([a-z0-9-]+\.(?:com|ai|io|net|org|co|tech|app))\b'
+        domain_pattern = r'\b([a-z0-9-]+\.(?:com|ai|io|net|org|co|tech|app|dev|xyz|so|vc|cloud|studio|ventures|fund|global|systems|company))\b'
         matches = re.findall(domain_pattern, text.lower())
         
         for match in matches:
@@ -216,36 +239,12 @@ class DomainResolver:
         name_lower = company_name.lower()
         name_slug = name_lower.replace(' ', '')
 
-        # Quick win: if domain slug matches a MULTI-WORD company name slug, it's very likely correct
-        # e.g. "slangai.com" for "Slang AI", "grottoai.com" for "Grotto AI"
-        # We only apply this for multi-word names (slug len > 6) to avoid false positives on
-        # generic single words like "badge", "jump", "nimble" which match their own .com domains.
-        domain_stripped = domain.replace('www.', '').split('.')[0]
-        is_distinctive_match = (
-            len(name_slug) > 6  # only for longer, non-generic slugs
-            and ' ' in company_name.strip()  # must be a multi-word name
-            and (name_slug in domain_stripped or domain_stripped in name_slug)
-        )
-        if is_distinctive_match:
-            # Still check it's not a parking page
-            try:
-                r = requests.get(
-                    f'https://{domain}', timeout=6,
-                    headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True, verify=False
-                )
-                final_host = urlparse(r.url).netloc.replace('www.', '')
-                if any(p in final_host for p in self.reject_patterns):
-                    return False
-            except Exception:
-                pass
-            return True
-
         try:
             r = requests.get(
                 f'https://{domain}', timeout=6,
                 headers={'User-Agent': 'Mozilla/5.0'}, allow_redirects=True, verify=False
             )
-            # Reject if redirected to a known parking/broker site
+            # Reject if redirected to a known parking/broker/hosting site
             final_host = urlparse(r.url).netloc.replace('www.', '')
             if any(p in final_host for p in self.reject_patterns):
                 return False
@@ -346,7 +345,7 @@ explanation. If you cannot confidently identify the correct domain, return: NOT_
             # Extract first domain-like pattern from response
             # Handles: "trybadge.com", "The domain is trybadge.com.", "trybadge.com (official site)"
             domain_match = re.search(
-                r'\b([a-z0-9][a-z0-9\-]*\.(?:com|ai|io|net|org|co|tech|app|dev|so|xyz|cc|app|vc|health|finance|capital))\b',
+                r'\b([a-z0-9][a-z0-9\-]*\.(?:com|ai|io|net|org|co|tech|app|dev|so|xyz|cc|vc|health|finance|capital|cloud|studio|ventures|fund|global|systems|company))\b',
                 response.lower()
             )
             if not domain_match:
@@ -383,8 +382,8 @@ explanation. If you cannot confidently identify the correct domain, return: NOT_
         - Cannot be social media or aggregator
         - Must be root domain (not subdomain)
         """
-        # Basic format check
-        if not re.match(r'^[a-z0-9-]+\.[a-z]{2,}$', domain.lower()):
+        # Basic format check — allow word.tld and word.co.uk / word.com.au style
+        if not re.match(r'^[a-z0-9-]+\.[a-z]{2,}(?:\.[a-z]{2})?$', domain.lower()):
             return False
         
         # Reject unwanted domains
