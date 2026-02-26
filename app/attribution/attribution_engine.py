@@ -1128,8 +1128,6 @@ class AttributionEngine:
           - 2+ years old          → WEAK   (0.3)
           - Unknown date          → MEDIUM (0.6)
         """
-        import time as _time
-
         signals = []
         company_lower = company_name.lower()
         found_providers: set = set()   # track which providers already have a signal
@@ -1275,14 +1273,14 @@ class AttributionEngine:
             pass
 
         # ------------------------------------------------------------------ #
-        # SOURCE 2: DuckDuckGo HTML search (per-provider fallback)            #
+        # SOURCE 2: Brave Search API (per-provider fallback)                  #
         # Runs only for providers not already found via Google News.           #
+        # No sleeps needed — proper API with rate limits, not HTML scraping.  #
         # ------------------------------------------------------------------ #
-        # Providers not yet found — build targeted DDG queries for each
         provider_queries = {
-            'AWS':        (ProviderType.CLOUD, ['Amazon Web Services', 'AWS', 'Amazon']),
+            'AWS':        (ProviderType.CLOUD, ['Amazon Web Services', 'AWS']),
             'GCP':        (ProviderType.CLOUD, ['Google Cloud']),
-            'Azure':      (ProviderType.CLOUD, ['Microsoft Azure', 'Azure', 'Microsoft']),
+            'Azure':      (ProviderType.CLOUD, ['Microsoft Azure', 'Azure']),
             'CoreWeave':  (ProviderType.CLOUD, ['CoreWeave']),
             'OCI':        (ProviderType.CLOUD, ['Oracle Cloud']),
             'OpenAI':     (ProviderType.AI,    ['OpenAI']),
@@ -1292,90 +1290,51 @@ class AttributionEngine:
             'Mistral':    (ProviderType.AI,    ['Mistral']),
         }
 
-        # DDG User-Agent rotation — helps avoid bot detection
-        _ddg_uas = [
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        ]
-        _ua_idx = [0]   # mutable counter for rotation
-
-        def _next_ua():
-            ua = _ddg_uas[_ua_idx[0] % len(_ddg_uas)]
-            _ua_idx[0] += 1
-            return ua
-
-        ddg_first_request = True
+        brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
 
         for provider, (ptype, query_terms) in provider_queries.items():
             if provider in found_providers:
                 continue   # already have a signal from Google News
 
-            # Polite delay between DDG requests to avoid rate-limiting.
-            # Skip before the very first DDG call in this run.
-            if not ddg_first_request:
-                _time.sleep(1.5)
-            ddg_first_request = False
+            if not brave_key:
+                break      # no API key — skip all Brave fallback calls
 
-            # DDG query rules (learned from testing):
-            #   ✅ Unquoted terms work fine
-            #   ✅ Single-word quoted company name works fine
-            #   ❌ Multi-word quoted company name → 202 challenge
-            #   ❌ Quoting BOTH company and provider → 202 challenge
-            #   ❌ Long OR chains combined with any quotes → 202 challenge
-            # Strategy:
-            #   - For single-word names: quote the name ("Runway" Amazon)
-            #   - For multi-word names: quote first word only ("Fundamental" AI Amazon)
-            #   - Keep provider term bare, use 2-3 simple action keywords
-            # Use unquoted domain stem — matches legal name variants in DDG results
-            # (same logic as GNews: 'ricursive' catches "Ricursive Intelligence" articles)
-            # Fall back to quoted domain or company name if no domain available.
-            if domain_stem:
-                company_ddg = domain_stem          # unquoted stem — broadest coverage
-            elif website:
-                company_ddg = f'"{website}"'       # quoted domain
-            else:
-                company_ddg = f'"{company_name}"'  # quoted name — last resort
+            # Build a targeted Brave query:
+            #   "<company>" OR domain_stem  +  "provider term"  +  action keywords
+            # Quoting both company name and provider keeps results specific.
+            # Domain stem (e.g. "ricursive") catches legal-name variants in articles.
+            company_q = f'"{company_name}"'
+            if domain_stem and domain_stem not in company_lower:
+                company_q = f'{company_q} OR {domain_stem}'
 
-            primary_term = query_terms[0]  # most specific / canonical term
-            ddg_query = quote_plus(
-                f'{company_ddg} {primary_term} partnership deal contract'
+            primary_term = query_terms[0]  # most specific canonical term
+            brave_q = (
+                f'{company_q} "{primary_term}" '
+                f'partnership OR announces OR integrates OR "built on" OR "powered by" OR deal'
             )
-            ddg_url = f'https://html.duckduckgo.com/html/?q={ddg_query}'
 
             try:
-                r = requests.get(
-                    ddg_url, timeout=self.TIMEOUT,
-                    headers={'User-Agent': _next_ua()},
-                    verify=False
+                brave_r = requests.get(
+                    'https://api.search.brave.com/res/v1/web/search',
+                    headers={
+                        'Accept': 'application/json',
+                        'Accept-Encoding': 'gzip',
+                        'X-Subscription-Token': brave_key,
+                    },
+                    params={'q': brave_q, 'count': 5, 'text_decorations': False},
+                    timeout=self.TIMEOUT,
                 )
-                if r.status_code != 200:
+                if brave_r.status_code != 200:
                     continue
 
-                soup = BeautifulSoup(r.text, 'html.parser')
+                brave_data = brave_r.json()
+                web_results = brave_data.get('web', {}).get('results', [])
 
-                # DDG HTML layout: <div class="result"> contains
-                # <a class="result__a"> (title + href) and optionally
-                # <a class="result__url"> and <a class="result__snippet">
-                results = soup.find_all('div', class_='result')
-                if not results:
-                    results = soup.find_all('a', class_='result__a')
-
-                for result in results[:5]:
-                    title_tag  = (result.find('a', class_='result__a')
-                                  if result.name == 'div' else result)
-                    url_tag    = (result.find('a', class_='result__url')
-                                  if result.name == 'div' else None)
-                    snippet_tag = (result.find('a', class_='result__snippet')
-                                   if result.name == 'div' else None)
-
-                    if not title_tag:
-                        continue
-
-                    title      = title_tag.get_text(strip=True)
-                    snippet    = snippet_tag.get_text(strip=True) if snippet_tag else ''
-                    result_url = (title_tag.get('href', '')
-                                  or (url_tag.get_text(strip=True) if url_tag else ''))
+                for item in web_results:
+                    title   = item.get('title', '')
+                    url     = item.get('url', '')
+                    snippet = item.get('description', '')
+                    age     = item.get('age', '')   # e.g. "3 months ago", "2 years ago"
 
                     if not _is_valid_title(title):
                         continue
@@ -1386,19 +1345,33 @@ class AttributionEngine:
                     if not any(t in entry_text for t in provider_terms_lower):
                         continue
 
+                    # Brave's `age` field is a human-readable string — map it to
+                    # temporal weight. Falls back to MEDIUM when age is absent/unknown.
+                    age_lower = age.lower()
+                    if any(x in age_lower for x in ['hour', 'day', 'week', 'month']):
+                        strength, weight, age_label = SignalStrength.STRONG, 1.0, age
+                    elif 'year' in age_lower and not any(
+                        str(n) in age_lower for n in range(2, 10)
+                    ):
+                        # "1 year ago" → MEDIUM; "2 years ago" and above → WEAK
+                        strength, weight, age_label = SignalStrength.MEDIUM, 0.6, age
+                    elif age_lower:
+                        strength, weight, age_label = SignalStrength.WEAK, 0.3, age
+                    else:
+                        strength, weight, age_label = SignalStrength.MEDIUM, 0.6, 'unknown date'
+
                     if provider not in found_providers:
                         found_providers.add(provider)
-                        # DDG HTML has no pub dates → MEDIUM weight
                         signals.append(AttributionSignal(
                             provider_type=ptype,
                             provider_name=provider,
                             signal_source='partnership_announcement',
-                            signal_strength=SignalStrength.MEDIUM,
-                            evidence_text=f'Partnership news (unknown date): {title[:100]}',
-                            evidence_url=result_url,
-                            confidence_weight=0.6
+                            signal_strength=strength,
+                            evidence_text=f'Partnership news ({age_label}): {title[:100]}',
+                            evidence_url=url,
+                            confidence_weight=weight
                         ))
-                        break   # one signal per provider per source
+                        break   # one signal per provider
 
             except Exception:
                 continue
