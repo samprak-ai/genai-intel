@@ -15,6 +15,7 @@ Harvey example:
   Google Cloud     → "AI service provider"                        → AI PROVIDER (not cloud!)
 """
 
+import re
 import requests
 from bs4 import BeautifulSoup
 from typing import Optional
@@ -115,7 +116,7 @@ AI_SERVICE_PURPOSES = [
     "ai model",           # e.g. "AI model serving"
 ]
 
-# Common subprocessors page URL patterns
+# Common subprocessors page URL patterns (tried on the root domain)
 SUBPROCESSOR_URLS = [
     "/legal/subprocessors",
     "/privacy/subprocessors",
@@ -131,6 +132,47 @@ SUBPROCESSOR_URLS = [
     "/legal",
     "/security",
 ]
+
+# Subdomain prefixes to probe (in addition to root domain paths above)
+# e.g. trust.voiceline.ai/subprocessors, security.harvey.ai/subprocessors
+SUBPROCESSOR_SUBDOMAINS = [
+    ("trust", "/subprocessors"),
+    ("trust", "/"),
+    ("security", "/subprocessors"),
+    ("security", "/"),
+    ("privacy", "/subprocessors"),
+]
+
+# Vanta GraphQL endpoint (EU and US regions) used by Vanta-hosted trust portals
+# (trust.{company}.{tld} pages with data-slugid attribute)
+_VANTA_GRAPHQL_ENDPOINTS = [
+    "https://app.eu.vanta.com/graphql",
+    "https://app.vanta.com/graphql",
+]
+
+_VANTA_SUBPROCESSORS_QUERY = """
+query fetchTrustReportSubprocessorsPaginated(
+  $slugId: String!
+  $first: Int!
+) {
+  trust {
+    trustReportBySlugId(slugId: $slugId) {
+      id
+      subprocessorsPaginated(first: $first) {
+        totalCount
+        edges {
+          node {
+            id
+            name
+            purpose
+            location
+          }
+        }
+      }
+    }
+  }
+}
+"""
 
 
 # ============================================================================
@@ -167,7 +209,15 @@ class SubprocessorsParser:
 
     def parse(self, website: str) -> SubprocessorParseResult:
         """
-        Main entry point — scans all known URL patterns for a subprocessors page
+        Main entry point — scans all known URL patterns for a subprocessors page.
+
+        Probe order:
+        1. Root-domain paths  (e.g. voiceline.ai/subprocessors)
+        2. Trust/security subdomains  (e.g. trust.voiceline.ai/subprocessors)
+
+        For each candidate URL:
+        - If the page has data-slugid → Vanta SPA detected → call GraphQL API directly
+        - Otherwise: check keywords + parse HTML table / cards / definition list
 
         Args:
             website: Company domain e.g. "harvey.ai"
@@ -177,14 +227,29 @@ class SubprocessorsParser:
         """
         print(f"    🔎 Scanning for subprocessors page...")
 
-        for path in SUBPROCESSOR_URLS:
-            url = f"https://{website}{path}"
+        # Build probe list: root-domain paths first, then subdomain variants
+        probe_urls = [f"https://{website}{path}" for path in SUBPROCESSOR_URLS]
+        for subdomain, path in SUBPROCESSOR_SUBDOMAINS:
+            probe_urls.append(f"https://{subdomain}.{website}{path}")
 
+        for url in probe_urls:
             html = self._fetch_page(url)
             if not html:
                 continue
 
-            # Check if this page actually looks like a subprocessors page
+            # --- Vanta SPA fast-path ---
+            # Vanta trust portals are pure SPAs: static HTML contains only a
+            # data-slugid attribute; all subprocessor data is loaded via GraphQL.
+            vanta_result = self._try_vanta_graphql(html, url)
+            if vanta_result is not None:
+                # None means "not a Vanta page"; empty list means "Vanta page but
+                # no parseable entries" — still return found=True with whatever we got
+                if vanta_result.found:
+                    return vanta_result
+                # Vanta page detected but GraphQL returned nothing — fall through
+                continue
+
+            # --- Standard HTML parsing ---
             if not self._looks_like_subprocessors_page(html):
                 continue
 
@@ -227,6 +292,88 @@ class SubprocessorsParser:
         except Exception:
             pass
         return None
+
+    def _try_vanta_graphql(self, html: str, source_url: str) -> Optional['SubprocessorParseResult']:
+        """
+        Detect a Vanta-hosted trust portal and retrieve subprocessors via GraphQL.
+
+        Vanta trust portals (trust.{company}.{tld}/subprocessors) are pure SPAs —
+        the static HTML contains only a data-slugid attribute, all table data is
+        loaded by JS.  We bypass the JS runtime by calling Vanta's internal
+        GraphQL endpoint directly with the slugid from the HTML.
+
+        Returns:
+            SubprocessorParseResult  if this is a Vanta page (even if empty)
+            None                     if this is not a Vanta page at all
+        """
+        slugid_match = re.search(r'data-slugid="([^"]+)"', html)
+        if not slugid_match:
+            return None  # Not a Vanta page
+
+        slugid = slugid_match.group(1)
+        print(f"    🔍 Vanta trust portal detected (slugId={slugid})")
+
+        for endpoint in _VANTA_GRAPHQL_ENDPOINTS:
+            try:
+                resp = requests.post(
+                    endpoint,
+                    json={
+                        'query': _VANTA_SUBPROCESSORS_QUERY,
+                        'variables': {'slugId': slugid, 'first': 200},
+                    },
+                    headers={
+                        'User-Agent': 'Mozilla/5.0',
+                        'Content-Type': 'application/json',
+                        'Origin': source_url.split('/subprocessors')[0].split('/')[0] + '//' + source_url.split('/')[2],
+                        'Referer': source_url,
+                    },
+                    timeout=8,
+                )
+                if resp.status_code != 200:
+                    continue
+
+                data = resp.json()
+                edges = (
+                    data.get('data', {})
+                        .get('trust', {})
+                        .get('trustReportBySlugId', {})
+                        .get('subprocessorsPaginated', {})
+                        .get('edges', [])
+                )
+                if not edges:
+                    # GraphQL responded but returned zero rows — return found=False
+                    # so the caller can fall through
+                    return SubprocessorParseResult(found=False)
+
+                entries = []
+                for edge in edges:
+                    node = edge.get('node', {})
+                    name = node.get('name', '').strip()
+                    purpose = node.get('purpose', '').strip()
+                    location = node.get('location', '').strip() or None
+                    if name:
+                        entries.append(SubprocessorEntry(
+                            company_name=name,
+                            purpose=purpose,
+                            location=location,
+                            raw_text=f"{name} {purpose}",
+                        ))
+
+                print(f"    ✅ Vanta GraphQL: {len(entries)} subprocessors from {source_url}")
+                signals = self._entries_to_signals(entries, source_url)
+                return SubprocessorParseResult(
+                    found=True,
+                    source_url=source_url,
+                    entries=entries,
+                    signals=signals,
+                    raw_html=html,
+                )
+
+            except Exception:
+                continue
+
+        # All GraphQL endpoints failed — treat as Vanta page with no data
+        return SubprocessorParseResult(found=False)
 
     def _looks_like_subprocessors_page(self, html: str) -> bool:
         """
