@@ -63,6 +63,14 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # How much stronger one provider must be to be "primary" vs "multi"
 MULTI_PROVIDER_THRESHOLD = 0.3
 
+# Blog post URL slug patterns that indicate competitor/comparison pages.
+# These pages list other providers as alternatives/competitors — not the company's own stack.
+# Any blog post URL containing one of these patterns is skipped during blog scanning.
+_COMPETITOR_SLUG_PATTERNS = [
+    'alternative', '/vs-', '-vs-', '/vs/',
+    'competitor', 'comparison', 'compare',
+]
+
 # Reusable keyword maps for cloud and AI provider detection
 CLOUD_KEYWORDS = {
     'AWS': [
@@ -2238,13 +2246,26 @@ JSON:"""
             return signals
 
         # --- Step 3: Fetch and scan relevant posts ---
-        unique_urls = list(dict.fromkeys(post_urls_to_fetch))  # deduplicate, preserve order
+        # Filter out competitor/comparison pages — they list other providers as alternatives,
+        # not the company's own stack. e.g. "/blog/elevenlabs-alternatives" mentions AWS,
+        # Azure, GCP as competitors — those would be false positive signals.
+        unique_urls = [
+            u for u in dict.fromkeys(post_urls_to_fetch)   # deduplicate, preserve order
+            if not any(pat in u.lower() for pat in _COMPETITOR_SLUG_PATTERNS)
+        ]
+        if not unique_urls:
+            return signals
+
         print(f'    📰 Scanning {len(unique_urls)} relevant blog post(s)')
         blog_signals = self._check_evidence_urls(company_name, unique_urls)
 
-        # Re-label source from 'evidence_url' → 'tech_blog' for transparency
+        # Re-label source from 'evidence_url' → 'tech_blog' and downweight to MEDIUM (0.6).
+        # Blog posts are self-published content — credible but not externally verifiable
+        # like DNS records or subprocessors pages. Job postings also use 0.6 for the same reason.
         for sig in blog_signals:
             sig.signal_source = 'tech_blog'
+            sig.confidence_weight = 0.6
+            sig.signal_strength = SignalStrength.MEDIUM
 
         signals.extend(blog_signals)
         return signals
