@@ -64,8 +64,8 @@ def summary(db: DatabaseClient = Depends(get_db)):
     ai_dist    = db.get_ai_distribution()
     latest_run = db.get_latest_run()
 
-    # Count all startups in the database, not just those with a cloud attribution
-    total_result = db.client.table('startups').select('id', count='exact').execute()
+    # Count startups visible in the dashboard (respects $10M funding filter via view)
+    total_result = db.client.table('latest_attributions').select('id', count='exact').execute()
     total = total_result.count or 0
 
     return {
