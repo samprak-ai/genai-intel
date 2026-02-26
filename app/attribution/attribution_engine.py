@@ -1321,7 +1321,7 @@ class AttributionEngine:
                         'Accept-Encoding': 'gzip',
                         'X-Subscription-Token': brave_key,
                     },
-                    params={'q': brave_q, 'count': 5, 'text_decorations': False},
+                    params={'q': brave_q, 'count': 10, 'text_decorations': False},
                     timeout=self.TIMEOUT,
                 )
                 if brave_r.status_code != 200:
@@ -1372,6 +1372,98 @@ class AttributionEngine:
                             confidence_weight=weight
                         ))
                         break   # one signal per provider
+
+            except Exception:
+                continue
+
+            # ---------------------------------------------------------------- #
+            # INVERTED SEARCH: search from the provider's side                 #
+            # e.g. site:coreweave.com "Runway" — catches press releases        #
+            # published on provider domains that may not rank in the startup-  #
+            # centric query above (especially for lesser-known companies).     #
+            # Only runs if the startup-centric query yielded no signal.        #
+            # ---------------------------------------------------------------- #
+            if provider in found_providers:
+                continue   # startup-centric query already found something
+
+            # Build provider domain for site: restriction
+            provider_domain_map = {
+                'AWS':       'aws.amazon.com',
+                'GCP':       'cloud.google.com',
+                'Azure':     'azure.microsoft.com',
+                'CoreWeave': 'coreweave.com',
+                'OCI':       'oracle.com',
+                'OpenAI':    'openai.com',
+                'Anthropic': 'anthropic.com',
+                'Google AI': 'cloud.google.com',
+                'Cohere':    'cohere.com',
+                'Mistral':   'mistral.ai',
+            }
+            provider_domain = provider_domain_map.get(provider)
+            if not provider_domain:
+                continue
+
+            # Query: site:<provider_domain> "<company_name>"
+            # Falls back to un-sited query with provider term if domain is too narrow
+            inverted_q = f'site:{provider_domain} "{company_name}"'
+
+            try:
+                inv_r = requests.get(
+                    'https://api.search.brave.com/res/v1/web/search',
+                    headers={
+                        'Accept': 'application/json',
+                        'Accept-Encoding': 'gzip',
+                        'X-Subscription-Token': brave_key,
+                    },
+                    params={'q': inverted_q, 'count': 5, 'text_decorations': False},
+                    timeout=self.TIMEOUT,
+                )
+                if inv_r.status_code != 200:
+                    continue
+
+                inv_data = inv_r.json()
+                inv_results = inv_data.get('web', {}).get('results', [])
+
+                for item in inv_results:
+                    title   = item.get('title', '')
+                    url     = item.get('url', '')
+                    snippet = item.get('description', '')
+                    age     = item.get('age', '')
+
+                    if not _is_valid_title(title):
+                        continue
+
+                    # Confirm the company name appears in title or snippet
+                    entry_text = f'{title} {snippet}'.lower()
+                    if company_lower not in entry_text and (
+                        not domain_stem or domain_stem not in entry_text
+                    ):
+                        continue
+
+                    age_lower = age.lower()
+                    if any(x in age_lower for x in ['hour', 'day', 'week', 'month']):
+                        strength, weight, age_label = SignalStrength.STRONG, 1.0, age
+                    elif 'year' in age_lower and not any(
+                        str(n) in age_lower for n in range(2, 10)
+                    ):
+                        strength, weight, age_label = SignalStrength.MEDIUM, 0.6, age
+                    elif age_lower:
+                        strength, weight, age_label = SignalStrength.WEAK, 0.3, age
+                    else:
+                        strength, weight, age_label = SignalStrength.MEDIUM, 0.6, 'unknown date'
+
+                    if provider not in found_providers:
+                        found_providers.add(provider)
+                        signals.append(AttributionSignal(
+                            provider_type=ptype,
+                            provider_name=provider,
+                            signal_source='partnership_announcement',
+                            signal_strength=strength,
+                            evidence_text=f'Provider news ({age_label}): {title[:100]}',
+                            evidence_url=url,
+                            confidence_weight=weight
+                        ))
+                        break
 
             except Exception:
                 continue
