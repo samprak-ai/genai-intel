@@ -171,7 +171,6 @@ SELECT
     0 AS multi_cloud_count,
     COUNT(*) AS sole_provider_count
 FROM latest_attributions
-WHERE cloud_providers IS NOT NULL OR cloud_primary_provider IS NOT NULL
 GROUP BY 1
 ORDER BY startup_count DESC;
 
@@ -191,7 +190,6 @@ SELECT
     0 AS multi_ai_count,
     COUNT(*) AS sole_provider_count
 FROM latest_attributions
-WHERE ai_providers IS NOT NULL OR ai_primary_provider IS NOT NULL
 GROUP BY 1
 ORDER BY startup_count DESC;
 
