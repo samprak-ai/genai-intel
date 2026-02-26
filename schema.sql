@@ -167,6 +167,10 @@ CREATE INDEX idx_runs_status ON weekly_runs(status);
 -- ============================================================================
 
 -- Latest attribution for each startup (multi-cloud aware)
+-- Funding filter:
+--   - No funding_events row → included (manually added; funding unknown but assumed qualifying)
+--   - Largest known round >= $10M → included
+--   - Largest known round < $10M  → excluded
 CREATE OR REPLACE VIEW latest_attributions AS
 SELECT DISTINCT ON (s.id)
     s.id,
@@ -190,14 +194,13 @@ SELECT DISTINCT ON (s.id)
     a.snapshot_date,
     a.created_at
 FROM startups s
-INNER JOIN (
-    -- Only include startups whose largest funding round is >= $10M
+LEFT JOIN (
     SELECT startup_id, MAX(funding_amount_usd) AS max_funding_usd
     FROM funding_events
     GROUP BY startup_id
-    HAVING MAX(funding_amount_usd) >= 10
 ) mf ON s.id = mf.startup_id
 LEFT JOIN attribution_snapshots a ON s.id = a.startup_id
+WHERE mf.startup_id IS NULL OR mf.max_funding_usd >= 10
 ORDER BY s.id, a.snapshot_date DESC NULLS LAST;
 
 -- Cloud provider distribution (counts each provider in multi-cloud separately)
