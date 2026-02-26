@@ -155,7 +155,9 @@ ORDER BY s.id, a.snapshot_date DESC NULLS LAST;
 -- 2. Recreate cloud_provider_distribution
 --    One row per startup — multi-cloud startups count as a single "Multi-Cloud" slice.
 --    Major providers (AWS, GCP, Azure) are named directly; everything else → "Other".
-CREATE OR REPLACE VIEW cloud_provider_distribution AS
+--    Must DROP first — Postgres won't allow column renames via CREATE OR REPLACE VIEW.
+DROP VIEW IF EXISTS cloud_provider_distribution;
+CREATE VIEW cloud_provider_distribution AS
 SELECT
     CASE
         WHEN cloud_is_multi                               THEN 'Multi-Cloud'
@@ -175,7 +177,9 @@ ORDER BY startup_count DESC;
 
 -- 3. Recreate ai_provider_distribution
 --    One row per startup — multi-AI startups count as a single "Multi-Provider" slice.
-CREATE OR REPLACE VIEW ai_provider_distribution AS
+--    Must DROP first — Postgres won't allow column renames via CREATE OR REPLACE VIEW.
+DROP VIEW IF EXISTS ai_provider_distribution;
+CREATE VIEW ai_provider_distribution AS
 SELECT
     CASE
         WHEN ai_is_multi                THEN 'Multi-Provider'

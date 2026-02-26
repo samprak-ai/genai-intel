@@ -206,7 +206,8 @@ ORDER BY s.id, a.snapshot_date DESC NULLS LAST;
 -- Cloud provider distribution — one row per startup.
 -- Multi-cloud startups count as a single "Multi-Cloud" slice.
 -- Non-hyperscaler single providers (not AWS/GCP/Azure) count as "Other".
-CREATE OR REPLACE VIEW cloud_provider_distribution AS
+DROP VIEW IF EXISTS cloud_provider_distribution;
+CREATE VIEW cloud_provider_distribution AS
 SELECT
     CASE
         WHEN cloud_is_multi                                    THEN 'Multi-Cloud'
@@ -225,7 +226,8 @@ ORDER BY startup_count DESC;
 
 -- AI provider distribution — one row per startup.
 -- Multi-AI startups count as a single "Multi-Provider" slice.
-CREATE OR REPLACE VIEW ai_provider_distribution AS
+DROP VIEW IF EXISTS ai_provider_distribution;
+CREATE VIEW ai_provider_distribution AS
 SELECT
     CASE
         WHEN ai_is_multi                     THEN 'Multi-Provider'
