@@ -71,6 +71,32 @@ _COMPETITOR_SLUG_PATTERNS = [
     'competitor', 'comparison', 'compare',
 ]
 
+# "Other" hosting platforms — detected via DNS CNAME when no cloud signals are found.
+# Maps CNAME substring → display name. These emit WEAK (0.3) signals so the company
+# still shows up with a named provider instead of Unknown, but at low confidence.
+OTHER_PLATFORM_CNAMES = {
+    'vercel.app':    'Vercel',
+    'vercel-dns.com': 'Vercel',
+    'netlify.app':   'Netlify',
+    'netlify.com':   'Netlify',
+    'onrender.com':  'Render',
+    'github.io':     'GitHub Pages',
+    'webflow.io':    'Webflow',
+}
+
+# "Other" hosting platforms — detected via HTTP response headers.
+# Each entry is (header_name_lowercase, value_substring_or_None, platform_name).
+# None value_substring means: signal fires on header *presence* alone.
+OTHER_PLATFORM_HEADERS = [
+    ('server',               'vercel',     'Vercel'),
+    ('x-vercel-id',          None,         'Vercel'),
+    ('server',               'netlify',    'Netlify'),
+    ('x-nf-request-id',      None,         'Netlify'),
+    ('cf-ray',               None,         'Cloudflare'),
+    ('server',               'cloudflare', 'Cloudflare'),
+    ('x-render-origin-server', None,       'Render'),
+]
+
 # Reusable keyword maps for cloud and AI provider detection
 CLOUD_KEYWORDS = {
     'AWS': [
@@ -674,6 +700,15 @@ class AttributionEngine:
             all_signals.extend(founder_signals)
             if founder_signals:
                 print(f"    ✅ Founder background priors: {len(founder_signals)} signals")
+
+        # Other hosting platforms (Vercel, Netlify, Cloudflare, etc.) — fallback only.
+        # Only fires when no cloud signals were found so it never competes with real infra signals.
+        if canonical and not any(s.provider_type == ProviderType.CLOUD for s in all_signals):
+            other_signals = self._check_other_providers(canonical)
+            all_signals.extend(other_signals)
+            if other_signals:
+                names = ', '.join(s.provider_name for s in other_signals)
+                print(f"    ✅ Other hosting platform: {names}")
 
         total = len(all_signals)
         if total == 0:
@@ -1681,6 +1716,66 @@ JSON:"""
                 ))
         except Exception:
             pass  # HTTP failures are common for early-stage startups
+        return signals
+
+    def _check_other_providers(self, website: str) -> List[AttributionSignal]:
+        """
+        Detect "Other" hosting platforms (Vercel, Netlify, Cloudflare, etc.) via HTTP
+        headers and DNS CNAMEs.
+
+        This is a fallback — called only when no cloud signals (AWS/GCP/Azure) were found.
+        Emits WEAK (0.3) signals so companies show a named platform instead of Unknown,
+        but at low confidence since we're identifying the hosting layer, not the underlying cloud.
+        """
+        signals: List[AttributionSignal] = []
+        seen: set = set()
+
+        # --- Header check ---
+        try:
+            response = requests.get(
+                f'https://{website}', timeout=self.TIMEOUT,
+                headers=self.HEADERS, allow_redirects=True, verify=False
+            )
+            headers_lower = {k.lower(): v for k, v in response.headers.items()}
+
+            for header_name, value_substr, platform in OTHER_PLATFORM_HEADERS:
+                if header_name not in headers_lower:
+                    continue
+                header_val = headers_lower[header_name].lower()
+                if value_substr is None or value_substr in header_val:
+                    if platform not in seen:
+                        seen.add(platform)
+                        signals.append(AttributionSignal(
+                            provider_type=ProviderType.CLOUD,
+                            provider_name=platform,
+                            signal_source='http_headers',
+                            signal_strength=SignalStrength.WEAK,
+                            evidence_text=f'Hosted on {platform} (HTTP header: {header_name})',
+                            confidence_weight=0.3,
+                        ))
+        except Exception:
+            pass
+
+        # --- DNS CNAME check (only if headers didn't already identify the platform) ---
+        if not seen:
+            try:
+                answers = dns.resolver.resolve(website, 'CNAME')
+                for rdata in answers:
+                    cname = str(rdata.target).lower().rstrip('.')
+                    for pattern, platform in OTHER_PLATFORM_CNAMES.items():
+                        if pattern in cname and platform not in seen:
+                            seen.add(platform)
+                            signals.append(AttributionSignal(
+                                provider_type=ProviderType.CLOUD,
+                                provider_name=platform,
+                                signal_source='dns_cname',
+                                signal_strength=SignalStrength.WEAK,
+                                evidence_text=f'Hosted on {platform} (CNAME: {cname})',
+                                confidence_weight=0.3,
+                            ))
+            except Exception:
+                pass
+
         return signals
 
     def _extract_ashby_job_urls(

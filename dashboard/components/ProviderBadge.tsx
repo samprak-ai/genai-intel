@@ -7,10 +7,18 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const CLOUD_COLORS: Record<string, string> = {
-  AWS:       "bg-orange-100 text-orange-800 border-orange-200",
-  GCP:       "bg-blue-100   text-blue-800   border-blue-200",
-  Azure:     "bg-sky-100    text-sky-800    border-sky-200",
-  CoreWeave: "bg-purple-100 text-purple-800 border-purple-200",
+  AWS:            "bg-orange-100 text-orange-800 border-orange-200",
+  GCP:            "bg-blue-100   text-blue-800   border-blue-200",
+  Azure:          "bg-sky-100    text-sky-800    border-sky-200",
+  CoreWeave:      "bg-purple-100 text-purple-800 border-purple-200",
+  // Other hosting platforms
+  Vercel:         "bg-gray-800   text-white      border-gray-700",
+  Netlify:        "bg-teal-100   text-teal-800   border-teal-200",
+  Cloudflare:     "bg-orange-100 text-orange-700 border-orange-300",
+  Render:         "bg-indigo-100 text-indigo-800 border-indigo-200",
+  Fastly:         "bg-red-100    text-red-800    border-red-200",
+  "GitHub Pages": "bg-gray-100   text-gray-800   border-gray-300",
+  Webflow:        "bg-blue-100   text-blue-700   border-blue-300",
 };
 
 const AI_COLORS: Record<string, string> = {
