@@ -345,6 +345,8 @@ PARTNERSHIP_OVERRIDES = {
                        "source_url": "https://techfundingnews.com/fundamental-255m-nexus-tabular-ai-oak-hcft-aws/"},
     "Upwind":         {"cloud": "AWS",          "ai": None,
                        "source_url": "https://www.upwind.io/secure-your-aws-environment-with-upwind"},
+    "Runway":         {"cloud": "CoreWeave",    "ai": None,
+                       "source_url": "https://www.coreweave.com/news/coreweave-announces-agreement-to-power-runways-next-generation-ai-video-models"},
 }
 
 # Investor → cloud provider priors
