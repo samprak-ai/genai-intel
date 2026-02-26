@@ -195,13 +195,14 @@ class Pipeline:
 
         return self._complete_run(start_time, "completed")
 
-    def run_single(self, company_name: str, website: str) -> dict:
+    def run_single(self, company_name: str, website: str, industry: Optional[str] = None) -> dict:
         """
         Run attribution for a single company — useful for testing or manual checks
 
         Args:
             company_name: Company name e.g. "Harvey"
             website: Domain e.g. "harvey.ai"
+            industry: Optional industry tag e.g. "AI Chip Design" — enables hardware prior
 
         Returns:
             Dict with cloud and AI attribution results
@@ -212,6 +213,7 @@ class Pipeline:
             company_name=company_name,
             website=website,
             article_text=None,  # single runs have no article text
+            industry=industry,
         )
 
         result = {
@@ -339,6 +341,7 @@ class Pipeline:
                     lead_investors=event.lead_investors or [],
                     founder_background=event.founder_background or [],
                     evidence_urls=evidence_url_map.get(event.company_name, []),
+                    industry=event.industry,
                 )
 
                 result = {
@@ -826,6 +829,13 @@ def main():
         help="Website for single company run (required with --company)"
     )
     parser.add_argument(
+        "--industry",
+        type=str,
+        default=None,
+        help="Industry tag for single company run — enables hardware prior if applicable "
+             "(e.g. 'AI Chip Design', 'Humanoid Robotics', 'Space Infrastructure')"
+    )
+    parser.add_argument(
         "--domains",
         nargs="+",
         metavar="ENTRY",
@@ -862,7 +872,7 @@ def main():
             sys.exit(1)
 
         pipeline = Pipeline(dry_run=True)  # Single runs are always dry
-        pipeline.run_single(args.company, args.website)
+        pipeline.run_single(args.company, args.website, industry=args.industry)
         return
 
     # ── Manual batch mode — inline domains ──────────────────────────────────

@@ -54,7 +54,7 @@ from app.models import (
     AttributionSignal, Attribution, ProviderEntry,
     ProviderType, SignalStrength, EntrenchmentLevel,
     SignalWeights, PARTNERSHIP_OVERRIDES, NOT_APPLICABLE_COMPANIES,
-    INVESTOR_CLOUD_PRIORS, FOUNDER_CLOUD_PRIORS,
+    INVESTOR_CLOUD_PRIORS, FOUNDER_CLOUD_PRIORS, HARDWARE_INDUSTRIES,
 )
 from app.attribution.subprocessors_parser import SubprocessorsParser
 
@@ -521,6 +521,7 @@ class AttributionEngine:
         lead_investors: Optional[List[str]] = None,
         founder_background: Optional[List[str]] = None,
         evidence_urls: Optional[List[str]] = None,
+        industry: Optional[str] = None,
     ) -> Tuple[Optional[Attribution], Optional[Attribution]]:
         """
         Main attribution method
@@ -604,8 +605,59 @@ class AttributionEngine:
         cloud_signals = [s for s in signals if s.provider_type == ProviderType.CLOUD]
         ai_signals    = [s for s in signals if s.provider_type == ProviderType.AI]
 
-        cloud_attribution = self._calculate_attribution(cloud_signals, ProviderType.CLOUD)
-        ai_attribution    = self._calculate_attribution(ai_signals, ProviderType.AI)
+        # Hardware prior — for physical-system companies (chip design, robotics, space,
+        # nuclear, biotech-mfg) on-premises is the default assumption.
+        #
+        # Only signals with confidence_weight >= 0.6 are considered "strong enough" to
+        # override the prior.  Weight 0.3 signals (ip_asn, investor_prior, founder_prior,
+        # http_headers, dns_cname, homepage_investor, weak partnership news) are suppressed
+        # because they reflect context (who funded or founded the company) rather than
+        # actual cloud infrastructure choices.
+        #
+        # Signals that DO override the prior (weight >= 0.6):
+        #   - Job postings explicitly naming cloud services (0.6)
+        #   - Tech blog posts with specific cloud infra keywords (0.6)
+        #   - DNS CNAME / IP/ASN pointing directly to a cloud range (1.0 / 0.6)
+        #   - Subprocessors list entries (1.0)
+        #   - Formal partnership pages (1.0)
+        _HARDWARE_MIN_WEIGHT = 0.6
+        is_hardware = bool(
+            industry and
+            any(h in industry.lower() for h in HARDWARE_INDUSTRIES)
+        )
+        if is_hardware:
+            strong_cloud = [s for s in cloud_signals
+                            if s.confidence_weight >= _HARDWARE_MIN_WEIGHT]
+            if not strong_cloud:
+                # No meaningful cloud evidence — clear signals so we return On-Premises
+                if cloud_signals:
+                    suppressed = [(s.signal_source, s.confidence_weight) for s in cloud_signals]
+                    print(f"  ℹ️  Hardware prior: suppressing {len(cloud_signals)} weak "
+                          f"cloud signal(s) {suppressed} → defaulting to On-Premises")
+                cloud_signals = []
+
+        if is_hardware and not cloud_signals:
+            # Synthesise an On-Premises result rather than returning Unknown
+            cloud_attribution = Attribution(
+                provider_type=ProviderType.CLOUD,
+                is_multi=False,
+                primary_provider='On-Premises',
+                providers=[ProviderEntry(
+                    provider_name='On-Premises',
+                    role='Hardware company — on-premises prior (no cloud signals found)',
+                    confidence=0.15,
+                    entrenchment=EntrenchmentLevel.WEAK,
+                    raw_score=0.3,
+                    signals=[],
+                )],
+                confidence=0.15,
+                evidence_count=0,
+                signals=[],
+            )
+        else:
+            cloud_attribution = self._calculate_attribution(cloud_signals, ProviderType.CLOUD)
+
+        ai_attribution = self._calculate_attribution(ai_signals, ProviderType.AI)
 
         # 4. LLM fallback (Tier 4) — only when deterministic signals are weak
         cloud_needs_llm = (

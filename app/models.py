@@ -411,6 +411,28 @@ NOT_APPLICABLE_COMPANIES: dict[str, dict[str, Optional[str]]] = {
     },
 }
 
+# Industries where physical / on-premises infrastructure is the *default* assumption.
+# For these company types, weak cloud signals (founder priors, IP/ASN, HTTP headers,
+# investor priors) are suppressed unless a stronger signal is found (DNS CNAME to a
+# cloud provider, a partnership page, or job postings that explicitly reference cloud
+# infra rather than just listing cloud tech as a candidate skill requirement).
+#
+# Matching is case-insensitive substring — "AI Chip Design" matches "ai chip design".
+HARDWARE_INDUSTRIES: frozenset = frozenset({
+    "ai chip design",
+    "chip design",
+    "hardware",
+    "humanoid robotics",
+    "robotics",
+    "space infrastructure",
+    "nuclear fuel",
+    "nuclear energy",
+    "fusion energy",
+    "biotech mfg",
+    "biotech manufacturing",
+    "wet lab",
+})
+
 INVESTOR_CLOUD_PRIORS: dict[str, tuple[str, str]] = {
     # Google Ventures / GV — portfolio often on GCP
     "gv":                         ("GCP", "Google Ventures portfolio company"),
