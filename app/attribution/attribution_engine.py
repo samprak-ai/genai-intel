@@ -1162,14 +1162,22 @@ class AttributionEngine:
             'partnership OR announces OR contract OR deal OR signed '
             'OR investment OR selects OR adopts OR deploys OR integrates OR launches'
         )
-        # Query strategy: '"domain.com" OR domain_stem action_terms'
+        # Query strategy: '"domain.com" OR domain_stem [OR "company name"] action_terms'
         # - Quoted domain catches articles that mention the URL directly
         # - Unquoted stem catches press articles that use the legal/full company name
         #   (e.g. '"ricursive.ai" OR ricursive' catches "Ricursive Intelligence raises $335M")
         #   (e.g. '"runwayml.com" OR runwayml' avoids "Runway Girl Network" at title-filter time)
+        # - Quoted company name (when multi-word) catches articles that spell it with spaces
+        #   (e.g. '"worldlabs.com" OR worldlabs OR "world labs"' catches TechCrunch "World Labs")
         # The title filter (_is_valid_title) enforces stem-as-word-token to avoid false positives.
         if website and domain_stem:
-            gnews_q = quote_plus(f'"{website}" OR {domain_stem} {action_terms}')
+            # Add quoted company name when it's multi-word — articles may spell it
+            # with spaces (e.g. "World Labs") while the domain stem is one word ("worldlabs").
+            # Skip when company name is single-word (already covered by domain_stem token).
+            if ' ' in company_lower:
+                gnews_q = quote_plus(f'"{website}" OR {domain_stem} OR "{company_lower}" {action_terms}')
+            else:
+                gnews_q = quote_plus(f'"{website}" OR {domain_stem} {action_terms}')
         else:
             search_id = website if website else company_name
             gnews_q = quote_plus(f'"{search_id}" {action_terms}')

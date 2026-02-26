@@ -33,6 +33,7 @@ CLOUD_PROVIDERS = {
     "google cloud": "GCP",
     "google cloud platform": "GCP",
     "gcp": "GCP",
+    "google": "GCP",                 # Listed as just "Google" with cloud infra purpose
     "microsoft azure": "Azure",
     "microsoft corp": "Azure",       # Harvey lists it this way
     "microsoft corporation": "Azure",
@@ -49,6 +50,7 @@ AI_PROVIDERS = {
     "gemini": "Google AI",
     "google cloud platform": "Google AI",  # When listed as AI provider
     "google cloud": "Google AI",            # When listed as AI provider
+    "google": "Google AI",                  # When listed as just "Google" with AI purpose
     "cohere": "Cohere",
     "mistral": "Mistral",
     "aws bedrock": "AWS Bedrock",

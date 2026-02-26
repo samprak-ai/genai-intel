@@ -19,6 +19,8 @@ class DomainResolver:
     Philosophy: Try facts first, AI last
     """
     
+    HEADERS = {'User-Agent': 'Mozilla/5.0'}
+
     def __init__(self):
         self.anthropic_client = anthropic.Anthropic(
             api_key=os.getenv('ANTHROPIC_API_KEY')
@@ -71,13 +73,13 @@ class DomainResolver:
             domain = self._extract_from_text(article_text)
             if domain:
                 print(f"  ✅ Found in article: {domain}")
-                return domain
+                return self._canonical_domain(domain)
 
         # Stage 2: DNS-based guessing (deterministic)
         domain = self._dns_guessing(company_name)
         if domain:
             print(f"  ✅ Found via DNS: {domain}")
-            return domain
+            return self._canonical_domain(domain)
 
         # Stage 3: AI web search with full context (last resort)
         domain = self._ai_search(
@@ -91,11 +93,37 @@ class DomainResolver:
         )
         if domain:
             print(f"  ✅ Found via AI search: {domain}")
-            return domain
+            return self._canonical_domain(domain)
 
         print(f"  ❌ Could not resolve domain")
         return None
     
+    def _canonical_domain(self, domain: str) -> str:
+        """
+        Follow HTTP redirect and return the final apex domain.
+        e.g. worldlabs.com → worldlabs.ai
+        Returns original domain if redirect fails or stays on same apex.
+        """
+        try:
+            r = requests.get(
+                f'https://{domain}',
+                timeout=6,
+                allow_redirects=True,
+                headers=self.HEADERS,
+                verify=False,
+            )
+            final = urlparse(r.url).netloc.lower().replace('www.', '')
+            if not final:
+                return domain
+            final_apex = '.'.join(final.split('.')[-2:])
+            orig_apex  = '.'.join(domain.split('.')[-2:])
+            if final_apex != orig_apex:
+                print(f"  ↪  Canonical redirect: {domain} → {final}")
+                return final
+        except Exception:
+            pass
+        return domain
+
     def _extract_from_text(self, text: str) -> Optional[str]:
         """
         Stage 1: Extract domain from article text using regex
