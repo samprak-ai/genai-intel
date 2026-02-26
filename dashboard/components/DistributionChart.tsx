@@ -92,10 +92,10 @@ export function DistributionChart({ data, type }: Props) {
           ))}
         </Pie>
         <Tooltip
-          formatter={(v: number | string | undefined, name: string) => {
+          formatter={(v: number | string | undefined, name: string | undefined) => {
             const n   = Number(v ?? 0);
             const pct = total > 0 ? ((n / total) * 100).toFixed(1) : "0";
-            return [`${n} startups (${pct}%)`, name];
+            return [`${n} startups (${pct}%)`, name ?? ""];
           }}
           contentStyle={{ fontSize: 12 }}
         />
