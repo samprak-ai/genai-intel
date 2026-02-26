@@ -270,7 +270,9 @@ ORDER BY signal_count DESC;
 -- Recent funding events with attribution (multi-cloud aware)
 -- Returns structured provider fields so the dashboard component can apply
 -- Multi-Cloud / Other (...) display logic consistently.
-CREATE OR REPLACE VIEW recent_funding_with_attribution AS
+-- Must DROP first — column names changed from cloud_display/ai_display.
+DROP VIEW IF EXISTS recent_funding_with_attribution;
+CREATE VIEW recent_funding_with_attribution AS
 SELECT
     s.canonical_name,
     s.website,
