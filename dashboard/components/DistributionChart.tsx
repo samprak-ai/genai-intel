@@ -22,12 +22,21 @@ const CLOUD_PALETTE: Record<string, string> = {
 };
 
 const AI_PALETTE: Record<string, string> = {
-  Anthropic:        "#D97706",
-  OpenAI:           "#10B981",
-  "Google AI":      "#4285F4",
-  Cohere:           "#7C3AED",
-  Mistral:          "#F43F5E",
-  "Multi-Provider": "#6366F1",  // indigo — mixed AI usage
+  // Established providers
+  Anthropic:        "#D97706",   // amber
+  OpenAI:           "#10B981",   // emerald
+  "Google AI":      "#4285F4",   // Google blue
+  Cohere:           "#7C3AED",   // violet
+  Mistral:          "#F43F5E",   // rose
+  // Open-source / inference providers
+  "Meta / Llama":   "#38BDF8",   // sky
+  "xAI / Grok":     "#1F2937",   // dark gray
+  "Hugging Face":   "#FBBF24",   // yellow
+  "Together AI":    "#14B8A6",   // teal
+  Groq:             "#F97316",   // orange
+  Replicate:        "#A855F7",   // purple
+  // Meta slices
+  "Multi-Provider": "#6366F1",   // indigo — mixed AI usage
   Unknown:          "#D1D5DB",
 };
 

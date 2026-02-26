@@ -63,12 +63,32 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # How much stronger one provider must be to be "primary" vs "multi"
 MULTI_PROVIDER_THRESHOLD = 0.3
 
+# AI signals are noisier (no DNS/IP deterministic tier) so require a wider gap
+# before declaring a single AI provider winner. This reduces false multi-AI
+# attributions from low-quality signals (job requirements, comparison blog posts).
+AI_MULTI_PROVIDER_THRESHOLD = 0.5
+
 # Blog post URL slug patterns that indicate competitor/comparison pages.
 # These pages list other providers as alternatives/competitors — not the company's own stack.
 # Any blog post URL containing one of these patterns is skipped during blog scanning.
 _COMPETITOR_SLUG_PATTERNS = [
     'alternative', '/vs-', '-vs-', '/vs/',
     'competitor', 'comparison', 'compare',
+    # Evaluation / benchmark content — rarely indicates actual infrastructure usage
+    'evaluat', 'benchmark', 'best-llm', 'best-ai',
+    'llm-review', 'model-review', 'choosing-', 'which-llm', 'which-ai',
+]
+
+# Phrases in job posting sentences that mark hiring *requirements*, not infrastructure usage.
+# "Experience with OpenAI API required" is a skill requirement, not proof they run on OpenAI.
+# Applied only to AI keyword signals — cloud keywords like 'EKS', 'BigQuery' are infra-specific
+# and don't typically appear as candidate skill requirements.
+_JOB_HIRING_PHRASES = [
+    'experience with', 'experience in', 'familiarity with', 'knowledge of',
+    'proficiency in', 'proficiency with', 'understanding of',
+    'preferred', 'bonus if', 'nice to have', 'nice-to-have',
+    'a plus', 'is a plus', 'would be a plus',
+    'worked with', 'exposure to',
 ]
 
 # "Other" hosting platforms — detected via DNS CNAME when no cloud signals are found.
@@ -160,22 +180,60 @@ CLOUD_KEYWORDS = {
 
 AI_KEYWORDS = {
     'OpenAI': [
-        'openai', 'chatgpt', 'gpt-4', 'gpt-3', 'dall-e', 'whisper',
-        'openai api', 'gpt-4o', 'o1-preview', 'o1-mini',
+        'openai', 'openai api', 'openai.com',
+        'chatgpt', 'gpt-4', 'gpt-4o', 'gpt-3', 'gpt-3.5',
+        'dall-e', 'whisper api', 'o1-preview', 'o1-mini',
     ],
     'Anthropic': [
-        'anthropic', ' claude ', 'claude api', 'claude 3',
-        'claude sonnet', 'claude opus', 'claude haiku',
+        'anthropic', 'anthropic api', 'anthropic.com',
+        'claude api', 'claude.ai',
+        'claude 3', 'claude sonnet', 'claude opus', 'claude haiku',
+        ' claude ',   # space-padded; lower weight in _PROVIDER_TERM_MAP
     ],
     'Google AI': [
-        'gemini', 'vertex ai', 'google ai studio', 'palm ',
-        'gemini pro', 'gemini ultra', 'gemma ',
+        'vertex ai', 'google ai studio', 'google ai',
+        'gemini api', 'gemini pro', 'gemini ultra', 'gemini flash',
+        'gemma ',     # open-weight model
+        'gemini ',    # broad; lower weight in _PROVIDER_TERM_MAP
+        # removed: 'palm ' — Palm 2 deprecated, too noisy (palm tree, palm beach)
     ],
     'Cohere': [
-        'cohere', 'cohere api', 'command-r', 'cohere embed',
+        'cohere', 'cohere api', 'cohere.ai',
+        'command-r', 'command r', 'cohere embed', 'cohere generate',
     ],
     'Mistral': [
-        'mistral', 'mistral ai', 'mixtral', 'mistral api',
+        'mistral ai', 'mistral api', 'mistral.ai',
+        'mixtral', 'mistral-7b', 'mistral-8x',
+        # bare 'mistral' kept for compound mentions but lower weight in _PROVIDER_TERM_MAP
+        'mistral ',
+    ],
+    # ------------------------------------------------------------------ #
+    # Open-source / inference providers — major gap filled below          #
+    # ------------------------------------------------------------------ #
+    'Meta / Llama': [
+        'llama 3', 'llama3', 'llama 2', 'llama2', 'llama 3.1', 'llama 3.2',
+        'meta llama', 'meta ai', 'meta.ai',
+        'llama api', 'llama model',
+    ],
+    'xAI / Grok': [
+        'xai grok', 'grok api', 'grok-1', 'grok-2', 'x.ai',
+        'xai.com', 'grok llm',
+    ],
+    'Hugging Face': [
+        'hugging face', 'huggingface', 'huggingface.co',
+        'hugging face api', 'inference api', 'transformers library',
+        'hf inference',
+    ],
+    'Together AI': [
+        'together ai', 'together.ai', 'together api',
+        'togetherai',
+    ],
+    'Replicate': [
+        'replicate.com', 'replicate api', ' replicate ',
+    ],
+    'Groq': [
+        'groq api', 'groq.com', 'groq inference',
+        # NOTE: bare 'groq' excluded — too common as a word/typo
     ],
 }
 
@@ -301,7 +359,7 @@ def _is_conjunctive_sentence(
     return False
 
 
-def _scan_job_sentences(text: str, keyword_map: dict) -> dict:
+def _scan_job_sentences(text: str, keyword_map: dict, ai_keyword_map: Optional[dict] = None) -> dict:
     """
     Sentence-aware wrapper around _keyword_scan() for job posting text.
 
@@ -312,12 +370,19 @@ def _scan_job_sentences(text: str, keyword_map: dict) -> dict:
          the providers sit close together with a list connector between them.
          Example discarded: "AWS, Azure, or GCP experience preferred"
          Example kept:      "architecture spans mixed AWS/on-prem nodes"
-      4. Union-merges signals from all non-conjunctive sentences.
+      4. For AI keywords only: discards sentences that contain hiring-requirement
+         phrases ("experience with", "familiarity with", "nice to have", etc.)
+         since those indicate candidate skill requirements, not infrastructure usage.
+         Example discarded: "Experience with OpenAI API required"
+         Example kept:      "Build pipelines integrating our OpenAI-powered API"
+      5. Union-merges signals from all non-conjunctive sentences.
 
     A provider survives if it appears in at least one non-conjunctive sentence.
     Returns the same {provider_name: [matched_keywords]} format as _keyword_scan().
     """
     merged: dict = {}
+    # Identify which providers are AI providers for the hiring-phrase filter
+    ai_providers = set(ai_keyword_map.keys()) if ai_keyword_map else set()
 
     for sentence in _split_job_sentences(text):
         sent_matches = _keyword_scan(sentence, keyword_map)
@@ -331,6 +396,19 @@ def _scan_job_sentences(text: str, keyword_map: dict) -> dict:
             sentence, matched_providers, keyword_map
         ):
             continue   # discard — "AWS, Azure, GCP" style skill-list noise
+
+        # For AI providers: discard sentences that read as hiring requirements.
+        # "Experience with OpenAI required" is a skill requirement, not infra proof.
+        # Cloud signals are exempt — cloud keywords (EKS, BigQuery, S3) are infra-specific
+        # and don't typically appear as candidate skill requirements.
+        if ai_providers:
+            sentence_lower = sentence.lower()
+            has_ai_match = any(p in ai_providers for p in matched_providers)
+            if has_ai_match and any(phrase in sentence_lower for phrase in _JOB_HIRING_PHRASES):
+                # Drop only the AI providers from this sentence; keep cloud matches
+                sent_matches = {p: kws for p, kws in sent_matches.items() if p not in ai_providers}
+                if not sent_matches:
+                    continue
 
         # Single provider, or multi-provider non-conjunctive sentence — keep
         for provider, keywords in sent_matches.items():
@@ -830,7 +908,11 @@ class AttributionEngine:
         second_score = ranked[1][1]
         gap          = top_score - second_score
 
-        if gap < MULTI_PROVIDER_THRESHOLD:
+        # Use a higher gap threshold for AI — signals are noisier (no DNS/IP
+        # deterministic tier), so require a wider margin before declaring single winner.
+        threshold = AI_MULTI_PROVIDER_THRESHOLD if provider_type == ProviderType.AI else MULTI_PROVIDER_THRESHOLD
+
+        if gap < threshold:
             result = Attribution(
                 provider_type=provider_type,
                 is_multi=True,
@@ -1159,13 +1241,41 @@ class AttributionEngine:
         ('private data center',    ProviderType.CLOUD, 'On-Premises', 0.6),
         ('bare metal',             ProviderType.CLOUD, 'On-Premises', 0.6),
         ('air-gapped',             ProviderType.CLOUD, 'On-Premises', 1.0),
-        # AI
-        ('openai',              ProviderType.AI,    'OpenAI',    1.0),
-        ('anthropic',           ProviderType.AI,    'Anthropic', 1.0),
-        ('vertex ai',           ProviderType.AI,    'Google AI', 1.0),
-        ('gemini',              ProviderType.AI,    'Google AI', 1.0),
-        ('cohere',              ProviderType.AI,    'Cohere',    1.0),
-        ('mistral',             ProviderType.AI,    'Mistral',   1.0),
+        # AI — unambiguous strong signals (1.0)
+        ('openai',              ProviderType.AI,    'OpenAI',        1.0),
+        ('openai api',          ProviderType.AI,    'OpenAI',        1.0),
+        ('anthropic',           ProviderType.AI,    'Anthropic',     1.0),
+        ('anthropic api',       ProviderType.AI,    'Anthropic',     1.0),
+        ('claude api',          ProviderType.AI,    'Anthropic',     1.0),
+        ('claude.ai',           ProviderType.AI,    'Anthropic',     1.0),
+        ('vertex ai',           ProviderType.AI,    'Google AI',     1.0),
+        ('google ai studio',    ProviderType.AI,    'Google AI',     1.0),
+        ('gemini api',          ProviderType.AI,    'Google AI',     1.0),
+        ('cohere',              ProviderType.AI,    'Cohere',        1.0),
+        ('mistral ai',          ProviderType.AI,    'Mistral',       1.0),
+        ('mistral api',         ProviderType.AI,    'Mistral',       1.0),
+        ('mixtral',             ProviderType.AI,    'Mistral',       1.0),
+        # Open-source / inference providers (1.0 — specific enough)
+        ('llama 3',             ProviderType.AI,    'Meta / Llama',  1.0),
+        ('llama 2',             ProviderType.AI,    'Meta / Llama',  1.0),
+        ('meta llama',          ProviderType.AI,    'Meta / Llama',  1.0),
+        ('llama api',           ProviderType.AI,    'Meta / Llama',  1.0),
+        ('grok api',            ProviderType.AI,    'xAI / Grok',    1.0),
+        ('grok-1',              ProviderType.AI,    'xAI / Grok',    1.0),
+        ('grok-2',              ProviderType.AI,    'xAI / Grok',    1.0),
+        ('hugging face',        ProviderType.AI,    'Hugging Face',  1.0),
+        ('huggingface',         ProviderType.AI,    'Hugging Face',  1.0),
+        ('together ai',         ProviderType.AI,    'Together AI',   1.0),
+        ('together.ai',         ProviderType.AI,    'Together AI',   1.0),
+        ('replicate.com',       ProviderType.AI,    'Replicate',     1.0),
+        ('replicate api',       ProviderType.AI,    'Replicate',     1.0),
+        ('groq api',            ProviderType.AI,    'Groq',          1.0),
+        ('groq.com',            ProviderType.AI,    'Groq',          1.0),
+        # AI — weaker/ambiguous signals (0.5) — common words that need corroboration
+        (' claude ',            ProviderType.AI,    'Anthropic',     0.5),
+        ('gemini ',             ProviderType.AI,    'Google AI',     0.5),
+        ('mistral ',            ProviderType.AI,    'Mistral',       0.5),
+        (' replicate ',         ProviderType.AI,    'Replicate',     0.5),
     ]
 
     def _check_partnership_announcements(self, company_name: str, website: str = "") -> List[AttributionSignal]:
@@ -1356,12 +1466,18 @@ class AttributionEngine:
             'Paperspace': (ProviderType.CLOUD, ['Paperspace', 'Gradient by Paperspace']),
             'Nebius':     (ProviderType.CLOUD, ['Nebius AI', 'Nebius Cloud']),
             'OCI':        (ProviderType.CLOUD, ['Oracle Cloud']),
-            # AI providers
-            'OpenAI':     (ProviderType.AI,    ['OpenAI']),
-            'Anthropic':  (ProviderType.AI,    ['Anthropic']),
-            'Google AI':  (ProviderType.AI,    ['Vertex AI', 'Gemini']),
-            'Cohere':     (ProviderType.AI,    ['Cohere']),
-            'Mistral':    (ProviderType.AI,    ['Mistral']),
+            # AI providers — established
+            'OpenAI':       (ProviderType.AI,    ['OpenAI']),
+            'Anthropic':    (ProviderType.AI,    ['Anthropic', 'Claude API']),
+            'Google AI':    (ProviderType.AI,    ['Vertex AI', 'Gemini API', 'Google AI Studio']),
+            'Cohere':       (ProviderType.AI,    ['Cohere']),
+            'Mistral':      (ProviderType.AI,    ['Mistral AI', 'Mixtral']),
+            # AI providers — open-source / inference
+            'Meta / Llama': (ProviderType.AI,    ['Meta Llama', 'Llama 3', 'Llama 2']),
+            'xAI / Grok':   (ProviderType.AI,    ['xAI Grok', 'Grok API']),
+            'Hugging Face': (ProviderType.AI,    ['Hugging Face', 'HuggingFace inference']),
+            'Together AI':  (ProviderType.AI,    ['Together AI', 'together.ai']),
+            'Groq':         (ProviderType.AI,    ['Groq inference', 'Groq API']),
         }
 
         brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
@@ -2175,9 +2291,9 @@ JSON:"""
                             confidence_weight=0.6
                         ))
 
-                # AI keyword scan — same conjunction filter for consistency
-                # ("OpenAI, Anthropic, or Cohere" skill lists are also noise)
-                ai_matches = _scan_job_sentences(text, AI_KEYWORDS)
+                # AI keyword scan — includes hiring-phrase filter to suppress
+                # candidate skill requirements ("experience with OpenAI required")
+                ai_matches = _scan_job_sentences(text, AI_KEYWORDS, ai_keyword_map=AI_KEYWORDS)
                 for provider, keywords in ai_matches.items():
                     if provider not in found_ai:
                         found_ai.add(provider)
@@ -3013,9 +3129,13 @@ JSON:"""
         if need_ai:
             tasks.append(
                 f"{'2' if need_cloud else '1'}. AI/LLM PROVIDERS: Which AI or LLM provider(s) does this "
-                "startup use or integrate with? "
-                "(e.g. OpenAI, Anthropic, Google AI / Gemini / Vertex AI, Cohere, Mistral). "
-                "Look for API references, model names, or integration statements."
+                "startup actively use in their own product infrastructure? "
+                "(e.g. OpenAI, Anthropic, Google AI / Gemini / Vertex AI, Cohere, Mistral, "
+                "Meta Llama, xAI Grok, Hugging Face, Together AI, Groq, Replicate). "
+                "Look for direct API usage, model deployment statements, or 'powered by' claims. "
+                "Do NOT include: providers they merely evaluated or benchmarked, "
+                "providers listed as compatible integrations for customers, "
+                "or providers mentioned only in comparison/tutorial content."
             )
 
         task_text = '\n'.join(tasks)
@@ -3030,7 +3150,7 @@ STARTUP: {company_name} ({website})
 
 For each provider you identify, respond with a JSON array of objects. Each object must have:
 - "provider_type": "cloud" or "ai"
-- "provider_name": canonical name (e.g. "AWS", "GCP", "Azure", "OpenAI", "Anthropic", "Google AI", "Cohere", "Mistral", "CoreWeave", "OCI")
+- "provider_name": canonical name (e.g. "AWS", "GCP", "Azure", "OpenAI", "Anthropic", "Google AI", "Cohere", "Mistral", "CoreWeave", "OCI", "Meta / Llama", "xAI / Grok", "Hugging Face", "Together AI", "Groq", "Replicate")
 - "confidence": integer 0–100 (how confident you are this startup actually uses this provider)
 - "evidence_quote": exact short quote (≤30 words) from the text below that supports this attribution
 - "reasoning": one sentence explaining why this quote indicates provider usage
@@ -3073,8 +3193,12 @@ JSON response:"""
                 return []
 
             # Canonical provider name validation
-            valid_cloud = {'AWS', 'GCP', 'Azure', 'CoreWeave', 'OCI', 'Lambda Labs', 'Vast.ai'}
-            valid_ai    = {'OpenAI', 'Anthropic', 'Google AI', 'Cohere', 'Mistral'}
+            valid_cloud = {'AWS', 'GCP', 'Azure', 'CoreWeave', 'OCI', 'Lambda', 'Vast.ai',
+                           'Crusoe', 'OVH', 'Vultr', 'Paperspace', 'Nebius', 'Fluidstack',
+                           'On-Premises', 'Hybrid'}
+            valid_ai    = {'OpenAI', 'Anthropic', 'Google AI', 'Cohere', 'Mistral',
+                           'Meta / Llama', 'xAI / Grok', 'Hugging Face', 'Together AI',
+                           'Groq', 'Replicate'}
 
             for item in findings:
                 ptype_raw     = str(item.get('provider_type', '')).lower()

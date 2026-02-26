@@ -51,11 +51,19 @@ const CLOUD_COLORS: Record<string, string> = {
 };
 
 const AI_COLORS: Record<string, string> = {
-  Anthropic:  "bg-amber-100  text-amber-800  border-amber-200",
-  OpenAI:     "bg-emerald-100 text-emerald-800 border-emerald-200",
-  "Google AI": "bg-blue-100  text-blue-800   border-blue-200",
-  Cohere:     "bg-violet-100 text-violet-800 border-violet-200",
-  Mistral:    "bg-rose-100   text-rose-800   border-rose-200",
+  // Established AI providers
+  Anthropic:       "bg-amber-100   text-amber-800   border-amber-200",
+  OpenAI:          "bg-emerald-100 text-emerald-800 border-emerald-200",
+  "Google AI":     "bg-blue-100    text-blue-800    border-blue-200",
+  Cohere:          "bg-violet-100  text-violet-800  border-violet-200",
+  Mistral:         "bg-rose-100    text-rose-800    border-rose-200",
+  // Open-source / inference providers
+  "Meta / Llama":  "bg-sky-100     text-sky-800     border-sky-200",
+  "xAI / Grok":    "bg-gray-800    text-white       border-gray-700",
+  "Hugging Face":  "bg-yellow-100  text-yellow-800  border-yellow-200",
+  "Together AI":   "bg-teal-100    text-teal-800    border-teal-200",
+  Groq:            "bg-orange-100  text-orange-800  border-orange-200",
+  Replicate:       "bg-purple-100  text-purple-800  border-purple-200",
 };
 
 interface Props {
