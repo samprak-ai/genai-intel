@@ -112,7 +112,7 @@ export default function CompaniesPage() {
                     </TableCell>
                     <TableCell><ConfidenceBar value={r.cloud_confidence} isNotApplicable={r.cloud_not_applicable} /></TableCell>
                     <TableCell><EntrenchmentChip level={r.cloud_entrenchment} /></TableCell>
-                    <TableCell className="max-w-[160px]">
+                    <TableCell className="max-w-[220px]">
                       <ProviderBadge name={r.ai_primary_provider} isMulti={r.ai_is_multi} providers={r.ai_providers} isNotApplicable={r.ai_not_applicable} type="ai" className="whitespace-normal w-full h-auto !rounded-md" />
                     </TableCell>
                     <TableCell><ConfidenceBar value={r.ai_confidence} isNotApplicable={r.ai_not_applicable} /></TableCell>
