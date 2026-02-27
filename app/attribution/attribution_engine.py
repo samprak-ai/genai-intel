@@ -1389,12 +1389,33 @@ class AttributionEngine:
             Return list of (ptype, provider, weight_multiplier) tuples matched
             in the given text. Uses _PROVIDER_TERM_MAP — most-specific terms first.
             weight_multiplier scales the temporal confidence weight for the signal.
+
+            Roundup-title guard: news roundup headlines often join unrelated stories
+            with semicolons (e.g. "A joins Amazon; ex-CEO lands at Code Metal").
+            If the title contains semicolons, we split into clauses and only accept
+            a provider match when the company name (or domain stem) appears in the
+            SAME clause as the provider term. This prevents cross-clause false
+            positives while still matching single-clause titles normally.
             """
-            text = f' {title} {summary} '.lower()
+            # Build per-clause segments when semicolons are present in the title
+            title_lower = title.lower()
+            if ';' in title_lower:
+                # Split on semicolons; only keep clauses that contain the company
+                clauses = [c.strip() for c in title_lower.split(';')]
+                company_clauses = [
+                    c for c in clauses
+                    if company_lower in c or (domain_stem and domain_stem in c)
+                ]
+                # If company appears in none of the clauses, fall back to full text
+                # (shouldn't happen given _is_valid_title already checked, but safe)
+                search_text = f' {" ".join(company_clauses) if company_clauses else title_lower} {summary.lower()} '
+            else:
+                search_text = f' {title_lower} {summary.lower()} '
+
             matched = []
             seen_providers = set()
             for term, ptype, provider, wt in self._PROVIDER_TERM_MAP:
-                if term in text and provider not in seen_providers:
+                if term in search_text and provider not in seen_providers:
                     matched.append((ptype, provider, wt))
                     seen_providers.add(provider)
             return matched
