@@ -412,6 +412,11 @@ class Pipeline:
                 # Save funding event
                 self.db.create_funding_event(startup_id, event)
 
+                # Clear stale signals before writing new ones — prevents old false
+                # positives from surviving re-attribution runs where the engine now
+                # correctly discards a previously-accepted signal.
+                self.db.delete_signals_for_startup(startup_id)
+
                 # Save attribution signals
                 if cloud_attr:
                     for signal in cloud_attr.signals:
@@ -465,6 +470,9 @@ class Pipeline:
                     continue
 
                 startup_id = startup["id"]
+
+                # Clear stale signals before writing new ones
+                self.db.delete_signals_for_startup(startup_id)
 
                 # Save attribution signals
                 if cloud_attr:
