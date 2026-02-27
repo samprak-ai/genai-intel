@@ -93,36 +93,26 @@ export function ProviderBadge({
     );
   }
 
-  // Multi-provider: render individual chips per provider so they wrap naturally
-  //   cloud + On-Premises among providers → labelled "Hybrid" header chip + per-provider chips
-  //   cloud multi                         → "Multi-Cloud" header chip + per-provider chips
-  //   ai multi                            → per-provider chips only (no header)
+  // Multi-provider: single badge with full provider list, rounded-md so it
+  // wraps cleanly as a rectangular chip rather than an oval blob.
+  //   cloud + On-Premises among providers → "Hybrid (AWS, On-Premises)"
+  //   cloud multi                         → "Multi-Cloud (AWS, GCP)"
+  //   ai multi                            → "Multi-Provider (Anthropic, OpenAI)"
   if (isMulti && providers.length > 0) {
+    const providerList = providers.join(", ");
     const isHybrid = type === "cloud" && providers.includes("On-Premises");
-    const headerLabel = isHybrid
-      ? "Hybrid"
+    const label = isHybrid
+      ? `Hybrid (${providerList})`
       : type === "cloud"
-        ? "Multi-Cloud"
-        : null;
-    const headerClass = isHybrid
+        ? `Multi-Cloud (${providerList})`
+        : `Multi-Provider (${providerList})`;
+    const badgeClass = isHybrid
       ? "bg-teal-100 text-teal-800 border-teal-200"
       : "bg-gray-100 text-gray-700 border-gray-300";
     return (
-      <div className={cn("flex flex-wrap gap-1", className)}>
-        {headerLabel && (
-          <Badge variant="outline" className={headerClass}>
-            {headerLabel}
-          </Badge>
-        )}
-        {providers.map((p) => {
-          const color = colorMap[p] ?? "bg-gray-100 text-gray-700 border-gray-200";
-          return (
-            <Badge key={p} variant="outline" className={color}>
-              {p}
-            </Badge>
-          );
-        })}
-      </div>
+      <Badge variant="outline" className={cn(badgeClass, "!rounded-md whitespace-normal h-auto leading-5", className)}>
+        {label}
+      </Badge>
     );
   }
 
