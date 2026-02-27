@@ -316,14 +316,25 @@ class Pipeline:
         attributed_count = 0
         evidence_url_map = dict(evidence_url_map or {})  # mutable copy
 
-        # Enrich evidence_url_map from manual_overrides stored in DB.
-        # This ensures URLs saved via the dashboard or scripts persist across
+        # Enrich FundingEvents from existing DB startup rows.
+        # When using --domains or --domains-file the FundingEvent only carries
+        # what was passed on the CLI (often just company + website).  Pull
+        # industry, lead_investors, and founder_background from the DB so that
+        # hardware priors, investor priors, and founder priors all fire correctly
+        # even when those fields weren't supplied on the command line.
+        # Also load evidence_urls from manual_overrides so they persist across
         # all future runs (cron, manual, re-attribution) without needing to
         # pass them explicitly every time.
         if self.db:
             for event in attributable:
                 startup_row = self.db.get_startup_by_website(event.website or '')
                 if startup_row:
+                    if not event.industry and startup_row.get('industry'):
+                        event.industry = startup_row['industry']
+                    if not event.lead_investors and startup_row.get('lead_investors'):
+                        event.lead_investors = startup_row['lead_investors']
+                    if not event.founder_background and startup_row.get('founder_background'):
+                        event.founder_background = startup_row['founder_background']
                     override = self.db.get_manual_override(startup_row['id'])
                     if override and override.get('evidence_urls'):
                         existing = evidence_url_map.get(event.company_name, [])

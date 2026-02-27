@@ -38,6 +38,11 @@ class DatabaseClient:
             'description': startup.description,
         }
 
+        # Never overwrite existing non-null fields with None — a re-attribution
+        # run typically has no industry/description in the FundingEvent, and the
+        # Supabase upsert would silently clear values that were set manually.
+        data = {k: v for k, v in data.items() if v is not None}
+
         result = self.client.table('startups') \
             .upsert(data, on_conflict='website') \
             .execute()
