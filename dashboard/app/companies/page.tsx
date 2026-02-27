@@ -25,6 +25,17 @@ export default function CompaniesPage() {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo]     = useState("");
   const [page, setPage]       = useState(1);
+  const [fundingSort, setFundingSort] = useState<"none" | "asc" | "desc">("none");
+
+  function cycleFundingSort() {
+    setFundingSort((s) => s === "none" ? "desc" : s === "desc" ? "asc" : "none");
+  }
+
+  const sortedRows = fundingSort === "none" ? rows : [...rows].sort((a, b) => {
+    const av = a.funding_amount_usd ?? -1;
+    const bv = b.funding_amount_usd ?? -1;
+    return fundingSort === "desc" ? bv - av : av - bv;
+  });
 
   async function load() {
     setLoading(true);
@@ -89,7 +100,14 @@ export default function CompaniesPage() {
               <TableHead><Tooltip text="How deeply integrated the provider is, based on signal strength and diversity" position="below">Entrenchment</Tooltip></TableHead>
               <TableHead>AI Provider</TableHead>
               <TableHead className="w-32"><Tooltip text="How certain we are about the AI provider attribution" position="below">Conf</Tooltip></TableHead>
-              <TableHead><Tooltip text="Largest known funding round" position="below">Funding</Tooltip></TableHead>
+              <TableHead>
+                <button onClick={cycleFundingSort} className="flex items-center gap-1 hover:text-gray-900 transition-colors group">
+                  <Tooltip text="Largest known funding round" position="below">Funding</Tooltip>
+                  <span className="text-gray-400 group-hover:text-gray-600 text-xs">
+                    {fundingSort === "desc" ? "↓" : fundingSort === "asc" ? "↑" : "↕"}
+                  </span>
+                </button>
+              </TableHead>
               <TableHead><Tooltip text="Month the funding was announced" position="below">Announced</Tooltip></TableHead>
               <TableHead>Updated</TableHead>
             </TableRow>
@@ -99,7 +117,7 @@ export default function CompaniesPage() {
               ? Array.from({ length: 8 }).map((_, i) => (
                   <TableRow key={i}>{Array.from({ length: 10 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                 ))
-              : rows.map((r) => (
+              : sortedRows.map((r) => (
                   <TableRow key={r.id} className="hover:bg-gray-50">
                     <TableCell className="font-medium">
                       <Link href={`/companies/${r.id}`} className="hover:underline text-blue-700">{r.canonical_name}</Link>
