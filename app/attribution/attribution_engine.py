@@ -1770,6 +1770,34 @@ class AttributionEngine:
             signals = self._filter_signals_by_relevance(signals, company_name, website)
         return signals
 
+    def _fetch_article_excerpt(self, url: str, max_chars: int = 1200) -> str:
+        """
+        Fetch a news article URL and return a plain-text excerpt of its body.
+
+        Google News links redirect through their own router — we follow redirects.
+        Returns '' on any failure (timeout, paywall, bot-block).
+        """
+        try:
+            r = requests.get(
+                url, timeout=8, headers=self.HEADERS,
+                verify=False, allow_redirects=True
+            )
+            if r.status_code != 200:
+                return ''
+            soup = BeautifulSoup(r.text, 'html.parser')
+            # Remove nav/header/footer/script clutter
+            for tag in soup(['script', 'style', 'nav', 'footer', 'header',
+                             'aside', 'form', 'noscript']):
+                tag.decompose()
+            # Prefer article body; fall back to full page text
+            article = soup.find('article') or soup.find(attrs={'role': 'main'}) or soup
+            text = article.get_text(separator=' ', strip=True)
+            # Collapse whitespace
+            text = re.sub(r'\s+', ' ', text)
+            return text[:max_chars]
+        except Exception:
+            return ''
+
     def _filter_signals_by_relevance(
         self,
         signals: List[AttributionSignal],
@@ -1779,52 +1807,74 @@ class AttributionEngine:
         """
         Batch-filter partnership announcement signals using Claude Haiku.
 
-        Discards signals whose article title is clearly about a different entity
-        that shares the company name token (e.g. a public letter, an art event,
-        a geographic location) rather than about THIS startup's cloud/AI usage.
+        Two-stage process per signal:
+          1. Fetch the article body (following any redirects from Google News).
+          2. Pass title + article excerpt to Haiku to confirm whether the article
+             is genuinely about THIS startup partnering with the identified
+             cloud/AI provider — not just a title keyword match.
+
+        Title-only filtering is insufficient for generic company names (e.g.
+        "loyal", "vector", "arc") where the word appears in unrelated articles.
+        Reading even 1000 chars of article body gives the LLM enough context to
+        distinguish "Loyal.com (dog longevity startup) + GCP" from "loyal wingman
+        drone programme + GCP".
 
         Falls back to returning all signals unfiltered if the LLM call or JSON
         parse fails — a network or billing error never silently drops signals.
 
-        Cost: ~$0.0001 per call (~500 tokens at Haiku pricing).
+        Cost: ~$0.0002 per call (~800 tokens at Haiku pricing).
         """
-        # Extract article titles from evidence_text ("Partnership news (date): TITLE")
+        # Build article blocks: title + fetched body excerpt
         lines = []
         for i, sig in enumerate(signals):
             raw = sig.evidence_text or ''
             colon_pos = raw.find(': ')
             title_part = raw[colon_pos + 2:] if colon_pos != -1 else raw
-            lines.append(f'{i + 1}. {title_part}')
 
-        articles_block = '\n'.join(lines)
+            # Fetch article body for richer context
+            excerpt = ''
+            if sig.evidence_url:
+                excerpt = self._fetch_article_excerpt(sig.evidence_url)
 
-        prompt = f"""You are a signal filter for a startup intelligence system.
+            if excerpt:
+                lines.append(
+                    f'{i + 1}. TITLE: {title_part}\n'
+                    f'   PROVIDER DETECTED: {sig.provider_name}\n'
+                    f'   ARTICLE EXCERPT: {excerpt[:1000]}'
+                )
+            else:
+                lines.append(
+                    f'{i + 1}. TITLE: {title_part}\n'
+                    f'   PROVIDER DETECTED: {sig.provider_name}\n'
+                    f'   ARTICLE EXCERPT: (could not fetch)'
+                )
+
+        articles_block = '\n\n'.join(lines)
+
+        prompt = f"""You are a signal validator for a startup cloud-infrastructure intelligence system.
 
 Company: {company_name}
 Website: {website}
 
-The system found the following news article titles while searching for partnership
-announcements between "{company_name}" and cloud or AI providers (AWS, GCP,
-Azure, OpenAI, Anthropic, etc.).
+The system found news articles while searching for partnerships between
+"{company_name}" (the startup at {website}) and cloud or AI providers.
 
-Your task: determine whether each article is actually about the startup
-"{company_name}" using or partnering with a cloud or AI provider — OR whether
-the article is about something else that happens to share a word with the
-company name (e.g. a geographic place, a common English word, a public letter,
-an art event, a different organisation).
+For each article below, decide:
+- KEEP: the article is genuinely about THIS startup ({company_name} at {website})
+  using, partnering with, or deploying the detected cloud/AI provider.
+- DISCARD: the article is about a different entity that shares a word with the
+  company name, OR the provider mention is incidental/unrelated to the startup.
 
-Rules:
-- KEEP if the article is plausibly about this specific startup's cloud/AI usage.
-- DISCARD if the article is clearly about a different entity or unrelated event.
-- When in doubt, KEEP.
+Be strict: if the article body does not clearly tie THIS specific startup to the
+detected provider, DISCARD it. A title keyword match alone is not enough.
 
-Articles to evaluate:
+Articles to validate:
 {articles_block}
 
-Respond with a JSON array — one object per article, in order:
+Respond with a JSON array — one object per article in order:
   "index": integer (1-based)
   "keep": boolean
-  "reason": one short phrase
+  "reason": one short phrase explaining the decision
 
 Return ONLY valid JSON — no markdown, no prose.
 
@@ -1833,7 +1883,7 @@ JSON:"""
         try:
             response = self.anthropic_client.messages.create(
                 model='claude-haiku-4-5-20251001',
-                max_tokens=400,
+                max_tokens=600,
                 messages=[{'role': 'user', 'content': prompt}]
             )
             raw = response.content[0].text.strip()
@@ -1855,8 +1905,11 @@ JSON:"""
             for item in decisions:
                 idx = int(item.get('index', 0))
                 keep = bool(item.get('keep', True))
+                reason = item.get('reason', '')
                 if keep and 1 <= idx <= len(signals):
                     keep_indices.add(idx - 1)
+                elif not keep:
+                    print(f"    🗑️  Discarded signal #{idx} ({signals[idx-1].provider_name}): {reason}")
 
             # Any signal the LLM didn't mention defaults to KEEP
             mentioned = {int(item.get('index', 0)) - 1 for item in decisions}
