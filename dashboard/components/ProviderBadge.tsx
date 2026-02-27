@@ -93,25 +93,36 @@ export function ProviderBadge({
     );
   }
 
-  // Multi-provider: render a single consolidated badge
-  //   cloud + On-Premises among providers → "Hybrid (AWS, On-Premises)"
-  //   cloud multi                         → "Multi-Cloud (AWS, GCP)"
-  //   ai multi                            → "Multi-Provider (Anthropic, OpenAI)"
+  // Multi-provider: render individual chips per provider so they wrap naturally
+  //   cloud + On-Premises among providers → labelled "Hybrid" header chip + per-provider chips
+  //   cloud multi                         → "Multi-Cloud" header chip + per-provider chips
+  //   ai multi                            → per-provider chips only (no header)
   if (isMulti && providers.length > 0) {
-    const providerList = providers.join(", ");
     const isHybrid = type === "cloud" && providers.includes("On-Premises");
-    const label = isHybrid
-      ? `Hybrid (${providerList})`
+    const headerLabel = isHybrid
+      ? "Hybrid"
       : type === "cloud"
-        ? `Multi-Cloud (${providerList})`
-        : `Multi-Provider (${providerList})`;
-    const badgeClass = isHybrid
+        ? "Multi-Cloud"
+        : null;
+    const headerClass = isHybrid
       ? "bg-teal-100 text-teal-800 border-teal-200"
       : "bg-gray-100 text-gray-700 border-gray-300";
     return (
-      <Badge variant="outline" className={cn(badgeClass, className)}>
-        {label}
-      </Badge>
+      <div className={cn("flex flex-wrap gap-1", className)}>
+        {headerLabel && (
+          <Badge variant="outline" className={headerClass}>
+            {headerLabel}
+          </Badge>
+        )}
+        {providers.map((p) => {
+          const color = colorMap[p] ?? "bg-gray-100 text-gray-700 border-gray-200";
+          return (
+            <Badge key={p} variant="outline" className={color}>
+              {p}
+            </Badge>
+          );
+        })}
+      </div>
     );
   }
 
