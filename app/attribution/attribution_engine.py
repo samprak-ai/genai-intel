@@ -2230,6 +2230,37 @@ JSON:"""
         except Exception:
             return ''
 
+    def _extract_getro_posting_text(self, soup: BeautifulSoup) -> str:
+        """
+        Extract the HTML job description from a Getro-based VC board individual job page.
+
+        Getro-powered job boards (8VC, a16z, Sequoia, etc.) are Next.js SPAs.
+        The job description is embedded in the __NEXT_DATA__ <script> tag at:
+          props.pageProps.initialState.jobs.currentJob.description  (HTML string)
+
+        Returns plain text extracted from the description HTML, or '' on failure.
+        """
+        script = soup.find('script', id='__NEXT_DATA__')
+        if not script or not script.string:
+            return ''
+        try:
+            data = json.loads(script.string)
+            current_job = (
+                data.get('props', {})
+                    .get('pageProps', {})
+                    .get('initialState', {})
+                    .get('jobs', {})
+                    .get('currentJob', {})
+            )
+            description_html = current_job.get('description', '') or ''
+            if not description_html:
+                return ''
+            # Parse the HTML description to get plain text
+            desc_soup = BeautifulSoup(description_html, 'html.parser')
+            return desc_soup.get_text(separator=' ', strip=True)
+        except Exception:
+            return ''
+
     def _check_job_postings(self, company_name: str) -> List[AttributionSignal]:
         """
         Search for engineering job postings that reveal tech stack.
@@ -2346,71 +2377,87 @@ JSON:"""
         # signals because the descriptions list the actual tech stack.       #
         # Postings are included even if no longer active, provided they are  #
         # less than 6 months old (or undated — include by default).          #
+        #                                                                    #
+        # Most VC boards use Getro (a Next.js SPA) — the company listing    #
+        # page does not embed job links in its HTML; they load via private   #
+        # API after page render.  We use Google search to discover individual#
+        # job page URLs (which Getro does render with full description in    #
+        # __NEXT_DATA__), then fetch those pages directly.                   #
         # ------------------------------------------------------------------ #
         investor_job_urls: list[str] = []
         hyphen_slug = company_name.lower().replace(' ', '-')
         cutoff_date = datetime.utcnow() - timedelta(days=180)
         investor_board_domains = [d for d, _ in INVESTOR_JOB_BOARDS]
 
-        # Phase 1: probe each VC board's direct company listing page.
-        # These pages link to individual job postings for the portfolio company.
-        for board_domain, company_url_tpl in INVESTOR_JOB_BOARDS:
-            company_page = company_url_tpl.format(slug=hyphen_slug, name=company_name)
-            try:
-                r = requests.get(
-                    company_page, timeout=self.TIMEOUT,
-                    headers=self.HEADERS, verify=False
-                )
-                if r.status_code == 200:
-                    soup = BeautifulSoup(r.text, 'html.parser')
-                    for a in soup.find_all('a', href=True):
-                        href = a['href']
-                        if href.startswith('/'):
-                            href = f'https://{board_domain}{href}'
-                        if (board_domain in href
-                                and href != company_page
-                                and href.rstrip('/') != company_page.rstrip('/')
-                                and href not in investor_job_urls
-                                and href not in individual_job_urls):
-                            investor_job_urls.append(href)
-            except Exception:
-                pass
+        # Two-phase discovery of individual investor board job pages:
+        #
+        # Phase A — Sitemap scan: Getro boards expose XML sitemaps that list all
+        #   job URLs including inactive postings.  Parse them to find company-specific
+        #   URLs.  This is the most complete source.
+        #
+        # Phase B — Brave Search fallback: Brave indexes these pages better than
+        #   Google and returns direct job URLs (no redirect unwrapping needed).
+        #   Used when sitemap is absent or company not found via sitemap.
 
-        # Phase 2: if direct probing found nothing, do a single Google News RSS
-        # search across all investor board domains simultaneously.  This catches
-        # companies whose slug differs from their canonical name (e.g. hyphenation,
-        # abbreviation) and boards that use non-standard URL structures.
+        # Phase A: sitemap scan
+        for board_domain, company_url_tpl in INVESTOR_JOB_BOARDS:
+            if investor_job_urls:
+                break
+            company_path_prefix = f'/{hyphen_slug}/jobs/'  # e.g. /cellares/jobs/
+            # Getro sitemaps: sitemap_jobs1.xml, sitemap_jobs2.xml, ...
+            for sitemap_n in range(1, 4):
+                sitemap_url = f'https://{board_domain}/sitemap_jobs{sitemap_n}.xml'
+                try:
+                    r = requests.get(
+                        sitemap_url, timeout=self.TIMEOUT,
+                        headers=self.HEADERS, verify=False
+                    )
+                    if r.status_code != 200:
+                        break  # no more sitemap pages for this board
+                    # Extract URLs matching this company
+                    for loc in re.findall(r'<loc>(https?://[^<]+)</loc>', r.text):
+                        parsed = urlparse(loc)
+                        if (parsed.netloc == board_domain
+                                and company_path_prefix in parsed.path
+                                and loc not in investor_job_urls
+                                and loc not in individual_job_urls):
+                            investor_job_urls.append(loc)
+                except Exception:
+                    break
+
+        # Phase B: Brave Search fallback (when sitemap found nothing)
         if not investor_job_urls:
-            try:
-                site_filter = ' OR '.join(f'site:{d}' for d in investor_board_domains)
-                gnews_q = quote_plus(f'"{company_name}" ({site_filter})')
-                gnews_url = (
-                    f'https://news.google.com/rss/search'
-                    f'?q={gnews_q}&hl=en-US&gl=US&ceid=US:en'
-                )
-                rss_resp = requests.get(
-                    gnews_url, timeout=self.TIMEOUT,
-                    headers=self.HEADERS, verify=False
-                )
-                if rss_resp.status_code == 200:
-                    feed = feedparser.parse(rss_resp.content)
-                    for entry in feed.entries:
-                        link = entry.get('link', '')
-                        if not any(bd in link for bd in investor_board_domains):
-                            continue
-                        # Age filter: skip if published and older than 6 months
-                        pub = entry.get('published_parsed')
-                        if pub:
-                            try:
-                                pub_dt = datetime(*pub[:6])
-                                if pub_dt < cutoff_date:
+            brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
+            if brave_key:
+                for board_domain in investor_board_domains:
+                    if investor_job_urls:
+                        break
+                    try:
+                        brave_query = f'"{company_name}" site:{board_domain}'
+                        resp = requests.get(
+                            'https://api.search.brave.com/res/v1/web/search',
+                            params={'q': brave_query, 'count': 5, 'text_decorations': False},
+                            headers={
+                                'Accept': 'application/json',
+                                'Accept-Encoding': 'gzip',
+                                'X-Subscription-Token': brave_key,
+                            },
+                            timeout=self.TIMEOUT,
+                        )
+                        if resp.status_code == 200:
+                            for result in resp.json().get('web', {}).get('results', []):
+                                url = result.get('url', '')
+                                if not url:
                                     continue
-                            except Exception:
-                                pass
-                        if link not in investor_job_urls and link not in individual_job_urls:
-                            investor_job_urls.append(link)
-            except Exception:
-                pass
+                                parsed_host = urlparse(url).netloc
+                                # Only individual job pages — skip board-level nav pages
+                                if (parsed_host == board_domain
+                                        and '/jobs/' in url
+                                        and url not in investor_job_urls
+                                        and url not in individual_job_urls):
+                                    investor_job_urls.append(url)
+                    except Exception:
+                        continue
 
         if investor_job_urls:
             print(f"    🏦 Investor job boards: {len(investor_job_urls)} postings found")
@@ -2449,6 +2496,10 @@ JSON:"""
                 extra_text = ''
                 if 'ashbyhq.com' in url:
                     extra_text = self._extract_ashby_posting_text(soup)
+                # Getro-based VC job boards (8VC, a16z, etc.) are Next.js SPAs.
+                # Job description text is in __NEXT_DATA__ initialState.jobs.currentJob.description.
+                elif any(bd in url for bd in investor_board_domains):
+                    extra_text = self._extract_getro_posting_text(soup)
 
                 for tag in soup(['script', 'style', 'nav', 'footer', 'header']):
                     tag.decompose()
