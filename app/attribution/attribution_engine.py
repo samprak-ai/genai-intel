@@ -43,7 +43,7 @@ import requests
 import socket
 import feedparser
 from typing import Optional, List, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote_plus, urlparse
@@ -77,6 +77,31 @@ _COMPETITOR_SLUG_PATTERNS = [
     # Evaluation / benchmark content — rarely indicates actual infrastructure usage
     'evaluat', 'benchmark', 'best-llm', 'best-ai',
     'llm-review', 'model-review', 'choosing-', 'which-llm', 'which-ai',
+]
+
+# Investor / VC portfolio job board domains.
+# Many startups post jobs on their investors' portfolio job boards rather than
+# (or in addition to) their own careers page — these are Tier 2 signals because
+# the job descriptions list the company's actual tech stack.
+# Each entry: (domain, company_page_url_template)
+# The template uses {slug} (lowercased, spaces→hyphens) and {name} (raw name).
+INVESTOR_JOB_BOARDS = [
+    # domain,                       company listing URL template
+    ('jobs.8vc.com',               'https://jobs.8vc.com/companies/{slug}'),
+    ('jobs.a16z.com',              'https://jobs.a16z.com/companies/{slug}'),
+    ('jobs.sequoiacap.com',        'https://jobs.sequoiacap.com/companies/{slug}'),
+    ('jobs.bvp.com',               'https://jobs.bvp.com/companies/{slug}'),
+    ('jobs.accel.com',             'https://jobs.accel.com/companies/{slug}'),
+    ('jobs.greylock.com',          'https://jobs.greylock.com/companies/{slug}'),
+    ('jobs.khoslaventures.com',    'https://jobs.khoslaventures.com/companies/{slug}'),
+    ('jobs.nea.com',               'https://jobs.nea.com/companies/{slug}'),
+    ('jobs.generalcatalyst.com',   'https://jobs.generalcatalyst.com/companies/{slug}'),
+    ('jobs.benchmark.com',         'https://jobs.benchmark.com/companies/{slug}'),
+    ('jobs.indexventures.com',     'https://jobs.indexventures.com/companies/{slug}'),
+    ('jobs.insightpartners.com',   'https://jobs.insightpartners.com/companies/{slug}'),
+    ('jobs.redpoint.com',          'https://jobs.redpoint.com/companies/{slug}'),
+    ('jobs.lightspeedvp.com',      'https://jobs.lightspeedvp.com/companies/{slug}'),
+    ('jobs.foundationcap.com',     'https://jobs.foundationcap.com/companies/{slug}'),
 ]
 
 # Phrases in job posting sentences that mark hiring *requirements*, not infrastructure usage.
@@ -2213,11 +2238,15 @@ JSON:"""
         list required technologies. "Must have 3+ years AWS experience" is a
         direct indicator of their infrastructure.
 
-        Two-phase strategy:
+        Three-phase strategy:
           Phase 1 — Board index pages: fetch the company's job board listing
             page (e.g. jobs.lever.co/cellares) and collect all individual
             job listing URLs linked from it.
-          Phase 2 — Individual job pages: fetch up to 5 individual engineering
+          Phase 2 — Investor job boards: probe VC portfolio job boards
+            (8VC, a16z, Sequoia, BVP, etc.) for the company's listings.
+            Postings are included even if no longer active, provided they
+            are less than 6 months old (or undated — included by default).
+          Phase 3 — Individual job pages: fetch up to 8 individual engineering
             role pages and keyword-scan their full text.
 
         Scanning the index page alone is insufficient — the index typically
@@ -2310,6 +2339,85 @@ JSON:"""
             except Exception:
                 pass
 
+        # ------------------------------------------------------------------ #
+        # Investor job board scan                                            #
+        # VC portfolio job boards (8vc, a16z, Sequoia, etc.) often host job #
+        # postings for their portfolio companies.  These are valuable Tier 2 #
+        # signals because the descriptions list the actual tech stack.       #
+        # Postings are included even if no longer active, provided they are  #
+        # less than 6 months old (or undated — include by default).          #
+        # ------------------------------------------------------------------ #
+        investor_job_urls: list[str] = []
+        hyphen_slug = company_name.lower().replace(' ', '-')
+        cutoff_date = datetime.utcnow() - timedelta(days=180)
+        investor_board_domains = [d for d, _ in INVESTOR_JOB_BOARDS]
+
+        # Phase 1: probe each VC board's direct company listing page.
+        # These pages link to individual job postings for the portfolio company.
+        for board_domain, company_url_tpl in INVESTOR_JOB_BOARDS:
+            company_page = company_url_tpl.format(slug=hyphen_slug, name=company_name)
+            try:
+                r = requests.get(
+                    company_page, timeout=self.TIMEOUT,
+                    headers=self.HEADERS, verify=False
+                )
+                if r.status_code == 200:
+                    soup = BeautifulSoup(r.text, 'html.parser')
+                    for a in soup.find_all('a', href=True):
+                        href = a['href']
+                        if href.startswith('/'):
+                            href = f'https://{board_domain}{href}'
+                        if (board_domain in href
+                                and href != company_page
+                                and href.rstrip('/') != company_page.rstrip('/')
+                                and href not in investor_job_urls
+                                and href not in individual_job_urls):
+                            investor_job_urls.append(href)
+            except Exception:
+                pass
+
+        # Phase 2: if direct probing found nothing, do a single Google News RSS
+        # search across all investor board domains simultaneously.  This catches
+        # companies whose slug differs from their canonical name (e.g. hyphenation,
+        # abbreviation) and boards that use non-standard URL structures.
+        if not investor_job_urls:
+            try:
+                site_filter = ' OR '.join(f'site:{d}' for d in investor_board_domains)
+                gnews_q = quote_plus(f'"{company_name}" ({site_filter})')
+                gnews_url = (
+                    f'https://news.google.com/rss/search'
+                    f'?q={gnews_q}&hl=en-US&gl=US&ceid=US:en'
+                )
+                rss_resp = requests.get(
+                    gnews_url, timeout=self.TIMEOUT,
+                    headers=self.HEADERS, verify=False
+                )
+                if rss_resp.status_code == 200:
+                    feed = feedparser.parse(rss_resp.content)
+                    for entry in feed.entries:
+                        link = entry.get('link', '')
+                        if not any(bd in link for bd in investor_board_domains):
+                            continue
+                        # Age filter: skip if published and older than 6 months
+                        pub = entry.get('published_parsed')
+                        if pub:
+                            try:
+                                pub_dt = datetime(*pub[:6])
+                                if pub_dt < cutoff_date:
+                                    continue
+                            except Exception:
+                                pass
+                        if link not in investor_job_urls and link not in individual_job_urls:
+                            investor_job_urls.append(link)
+            except Exception:
+                pass
+
+        if investor_job_urls:
+            print(f"    🏦 Investor job boards: {len(investor_job_urls)} postings found")
+
+        # Merge investor board URLs into the scan list (deduplicated)
+        all_job_urls = individual_job_urls + investor_job_urls
+
         # Scan up to 8 individual job pages for tech stack signals.
         # Prioritise software/infra/cloud roles — these are most likely to list
         # cloud stack requirements.  Hardware, mechanical, RF, FPGA, and other
@@ -2320,8 +2428,8 @@ JSON:"""
 
         # Sort: engineering roles first, then the rest
         sorted_urls = (
-            [u for u in individual_job_urls if _is_eng_role(u)] +
-            [u for u in individual_job_urls if not _is_eng_role(u)]
+            [u for u in all_job_urls if _is_eng_role(u)] +
+            [u for u in all_job_urls if not _is_eng_role(u)]
         )
 
         for url in sorted_urls[:8]:
