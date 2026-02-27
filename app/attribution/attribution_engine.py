@@ -254,7 +254,9 @@ AI_KEYWORDS = {
         'togetherai',
     ],
     'Replicate': [
-        'replicate.com', 'replicate api', ' replicate ',
+        'replicate.com', 'replicate api',
+        # NOTE: bare ' replicate ' excluded — too common as an English verb
+        # ("easy to replicate", "hard to replicate"). Use domain/API references only.
     ],
     'Groq': [
         'groq api', 'groq.com', 'groq inference',
@@ -848,7 +850,7 @@ class AttributionEngine:
             print(f"    ✅ HTTP headers: {len(header_signals)} signals")
 
         # Job postings
-        job_signals = self._check_job_postings(company_name)
+        job_signals = self._check_job_postings(company_name, website)
         all_signals.extend(job_signals)
         if job_signals:
             print(f"    ✅ Job postings: {len(job_signals)} signals")
@@ -1765,6 +1767,86 @@ class AttributionEngine:
             except Exception:
                 continue
 
+        # ------------------------------------------------------------------ #
+        # SOURCE 3: Broad company article scan (Brave, body-level keyword)  #
+        #                                                                    #
+        # The per-provider Brave queries above require the provider term to  #
+        # appear in the title or Brave snippet — missing providers that are  #
+        # mentioned only in the article body (e.g. a funding article that   #
+        # says "we use OpenAI and Gemini" in the body, not the title).      #
+        #                                                                    #
+        # This source fetches the top 10 company-focused news articles from  #
+        # Brave (no provider filter) and runs the full cloud/AI keyword scan  #
+        # on the article body — catching any provider mentions regardless of #
+        # where they appear in the text.                                     #
+        # ------------------------------------------------------------------ #
+        if brave_key:
+            try:
+                # Broad company news query — no provider terms, just recency signal
+                broad_q = f'"{company_name}" (funding OR launches OR raises OR announces OR "built on" OR "powered by")'
+                if domain_stem and domain_stem not in company_lower:
+                    broad_q = f'("{company_name}" OR {domain_stem}) (funding OR launches OR raises OR announces OR "built on" OR "powered by")'
+
+                broad_r = requests.get(
+                    'https://api.search.brave.com/res/v1/web/search',
+                    headers={
+                        'Accept': 'application/json',
+                        'Accept-Encoding': 'gzip',
+                        'X-Subscription-Token': brave_key,
+                    },
+                    params={'q': broad_q, 'count': 10, 'text_decorations': False},
+                    timeout=self.TIMEOUT,
+                )
+                if broad_r.status_code == 200:
+                    for item in broad_r.json().get('web', {}).get('results', []):
+                        art_url   = item.get('url', '')
+                        art_title = item.get('title', '')
+                        art_age   = item.get('age', '')
+                        if not art_url or not _is_valid_title(art_title):
+                            continue
+
+                        # Fetch and scan the article body
+                        body = self._fetch_article_excerpt(art_url, max_chars=4000)
+                        if not body:
+                            continue
+
+                        # Keyword-scan body for cloud and AI provider terms
+                        # Use _keyword_scan (not _scan_job_sentences) — news articles should not
+                        # have job-posting filters applied (conjunctive sentence discard, hiring
+                        # language discard, etc.)
+                        cloud_hits = _keyword_scan(body, CLOUD_KEYWORDS)
+                        ai_hits    = _keyword_scan(body, AI_KEYWORDS)
+
+                        age_lower = art_age.lower()
+                        if any(x in age_lower for x in ['hour', 'day', 'week', 'month']):
+                            strength, weight, age_label = SignalStrength.STRONG, 1.0, art_age
+                        elif 'year' in age_lower and not any(str(n) in age_lower for n in range(2, 10)):
+                            strength, weight, age_label = SignalStrength.MEDIUM, 0.6, art_age
+                        elif age_lower:
+                            strength, weight, age_label = SignalStrength.WEAK, 0.3, art_age
+                        else:
+                            strength, weight, age_label = SignalStrength.MEDIUM, 0.6, 'unknown date'
+
+                        for provider, kws in {**cloud_hits, **ai_hits}.items():
+                            if provider in found_providers:
+                                continue
+                            ptype = (
+                                ProviderType.CLOUD if provider in cloud_hits
+                                else ProviderType.AI
+                            )
+                            found_providers.add(provider)
+                            signals.append(AttributionSignal(
+                                provider_type=ptype,
+                                provider_name=provider,
+                                signal_source='partnership_announcement',
+                                signal_strength=strength,
+                                evidence_text=f'Provider mention in article ({age_label}): {art_title[:100]}',
+                                evidence_url=art_url,
+                                confidence_weight=weight,
+                            ))
+            except Exception:
+                pass
+
         # Step 3.5: Batch LLM relevance filter — discard signals about unrelated entities
         if signals and self.anthropic_client:
             signals = self._filter_signals_by_relevance(signals, company_name, website)
@@ -2314,7 +2396,7 @@ JSON:"""
         except Exception:
             return ''
 
-    def _check_job_postings(self, company_name: str) -> List[AttributionSignal]:
+    def _check_job_postings(self, company_name: str, website: str = "") -> List[AttributionSignal]:
         """
         Search for engineering job postings that reveal tech stack.
 
@@ -2342,14 +2424,53 @@ JSON:"""
         found_ai: set = set()
 
         slug = company_name.lower().replace(" ", "").replace("-", "")
+        # Hyphenated variant — many boards (Ashby, Rippling, Gem) use hyphens
+        hyphen_slug_job = company_name.lower().replace(" ", "-")
 
-        # Job board index URLs to probe
+        # Known job board domains — used both in the fixed probe list and to
+        # detect career links on the company's own website.
+        _KNOWN_JOB_BOARD_DOMAINS = {
+            'jobs.lever.co', 'boards.greenhouse.io', 'jobs.ashbyhq.com',
+            'apply.workable.com', 'jobs.gem.com', 'jobs.rippling.com',
+            'careers.jobvite.com', 'job-boards.greenhouse.io',
+            'bamboohr.com', 'jobs.smartrecruiters.com', 'icims.com',
+            'myworkdayjobs.com',
+        }
+
+        # Job board index URLs to probe — try both no-hyphen and hyphenated slugs
+        # (Ashby, Gem, and Rippling commonly use hyphens; Lever/Greenhouse don't)
         board_index_urls = [
             f'https://jobs.lever.co/{slug}',
             f'https://boards.greenhouse.io/{slug}',
             f'https://jobs.ashbyhq.com/{slug}',
+            f'https://jobs.ashbyhq.com/{hyphen_slug_job}',   # e.g. letter-ai
             f'https://apply.workable.com/{slug}',
         ]
+
+        # Discover career links from the company's own website.
+        # Startups that use non-standard boards (Gem, Rippling, Workday, etc.)
+        # almost always link to their careers page from their homepage or /blog footer.
+        # We scrape those links and add any recognised job board URLs to the probe list.
+        if website:
+            try:
+                r_home = requests.get(
+                    f'https://{website.lstrip("https://").lstrip("http://")}',
+                    timeout=self.TIMEOUT, headers=self.HEADERS, verify=False
+                )
+                if r_home.status_code == 200:
+                    home_soup = BeautifulSoup(r_home.text, 'html.parser')
+                    for a in home_soup.find_all('a', href=True):
+                        href = a['href']
+                        if not href.startswith('http'):
+                            continue
+                        parsed_href = urlparse(href)
+                        if any(parsed_href.netloc == bd or parsed_href.netloc.endswith('.' + bd)
+                               for bd in _KNOWN_JOB_BOARD_DOMAINS):
+                            # Add the full company listing URL if it's not already in probe list
+                            if href not in board_index_urls:
+                                board_index_urls.append(href)
+            except Exception:
+                pass
 
         # Collect individual job listing URLs by crawling the board index
         individual_job_urls: list[str] = []
