@@ -3208,7 +3208,9 @@ For each provider you identify, respond with a JSON array of objects. Each objec
 - "reasoning": one sentence explaining why this quote indicates provider usage
 
 Rules:
-- Only include providers with confidence ≥ 30
+- For cloud providers: only include if confidence ≥ 30
+- For AI providers: only include if confidence ≥ 60 — AI inference requires explicit evidence
+  (e.g. "powered by OpenAI", "uses Claude API", "built on Gemini") not mere proximity to AI terminology
 - A provider mentioned in a customer case study or as a "supported integration"
   may indicate customer use but is weaker evidence than "we run on X" or "our infrastructure uses X"
 - If the text mentions no relevant providers, return an empty array []
@@ -3275,6 +3277,13 @@ JSON response:"""
                 if ptype == ProviderType.CLOUD and not need_cloud:
                     continue
                 if ptype == ProviderType.AI and not need_ai:
+                    continue
+
+                # Hard confidence floors — AI requires explicit evidence (≥60),
+                # cloud is more permissive (≥30) since infra signals are more deterministic
+                if ptype == ProviderType.AI and confidence < 60:
+                    continue
+                if ptype == ProviderType.CLOUD and confidence < 30:
                     continue
 
                 # Map confidence to signal weight
