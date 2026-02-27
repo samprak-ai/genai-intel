@@ -107,12 +107,12 @@ export default function CompaniesPage() {
                     <TableCell className="text-gray-500 text-sm">
                       <a href={`https://${r.website}`} target="_blank" rel="noopener" className="hover:underline">{r.website}</a>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-normal max-w-[160px]">
                       <ProviderBadge name={r.cloud_primary_provider} isMulti={r.cloud_is_multi} providers={r.cloud_providers} isNotApplicable={r.cloud_not_applicable} type="cloud" />
                     </TableCell>
                     <TableCell><ConfidenceBar value={r.cloud_confidence} isNotApplicable={r.cloud_not_applicable} /></TableCell>
                     <TableCell><EntrenchmentChip level={r.cloud_entrenchment} /></TableCell>
-                    <TableCell>
+                    <TableCell className="whitespace-normal max-w-[160px]">
                       <ProviderBadge name={r.ai_primary_provider} isMulti={r.ai_is_multi} providers={r.ai_providers} isNotApplicable={r.ai_not_applicable} type="ai" />
                     </TableCell>
                     <TableCell><ConfidenceBar value={r.ai_confidence} isNotApplicable={r.ai_not_applicable} /></TableCell>
