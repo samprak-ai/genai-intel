@@ -113,23 +113,30 @@ class DomainResolver:
         """
         print(f"\n🔍 Resolving domain for: {company_name}")
 
-        # Stage 1: Extract from article (deterministic)
+        # Stage 1: Extract from article text (deterministic, highest confidence)
+        # The funding article we already have may contain the domain directly.
         if article_text:
             domain = self._extract_from_text(article_text)
             if domain:
                 print(f"  ✅ Found in article: {domain}")
                 return self._canonical_domain(domain)
 
-        # Stage 2: DNS-based guessing (deterministic)
-        domain = self._dns_guessing(company_name)
-        if domain:
-            print(f"  ✅ Found via DNS: {domain}")
-            return self._canonical_domain(domain)
-
         # Stage 2.5: Article-link search — scan funding announcement hyperlinks
+        # Prioritised above DNS guessing because we always process recently-funded
+        # startups (within 3 days), so fresh funding articles are always available
+        # and will hyperlink directly to the startup's real domain — regardless of
+        # TLD (.ai, .tech, .io, .com etc.).  DNS guessing is limited to common TLDs
+        # and can match unrelated companies that happen to own the .com variant.
         domain = self._article_link_search(company_name)
         if domain:
             print(f"  ✅ Found via article links: {domain}")
+            return self._canonical_domain(domain)
+
+        # Stage 2: DNS-based guessing (fallback when article search finds nothing)
+        # Useful for companies with minimal press coverage or very recent stealth exits.
+        domain = self._dns_guessing(company_name)
+        if domain:
+            print(f"  ✅ Found via DNS: {domain}")
             return self._canonical_domain(domain)
 
         # Stage 3: AI web search with full context (last resort)
