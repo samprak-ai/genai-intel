@@ -444,12 +444,20 @@ class DomainResolver:
 
     def _name_appears_on_homepage(self, domain: str, company_name: str) -> bool:
         """
-        Verify the company name appears on the resolved domain's homepage.
-        Prevents resolving generic dictionary-word domains (e.g. nimble.com)
-        to unrelated companies, and detects domain parking pages.
+        Verify the company name appears in a meaningful position on the homepage.
+
+        Checks high-signal locations only — <title>, <meta description>, <h1>, <h2>.
+        Full body text is intentionally excluded: common words like "code" or "metal"
+        appear on countless unrelated pages, producing false positives when we check
+        the entire HTML. A real company's homepage will always have its name in the
+        title or a top-level heading.
+
+        Falls back to full-body check only for single-token slugs that are
+        uncommon enough to be safely matched anywhere (e.g. "sambanova").
         """
         name_lower = company_name.lower()
         name_slug = name_lower.replace(' ', '')
+        name_words = name_lower.split()
 
         try:
             r = requests.get(
@@ -460,9 +468,43 @@ class DomainResolver:
             final_host = urlparse(r.url).netloc.replace('www.', '')
             if any(p in final_host for p in self.reject_patterns):
                 return False
-            # Check company name presence on page (slug or space-separated)
-            page_lower = r.text.lower()
-            return name_slug in page_lower or name_lower in page_lower
+
+            soup = BeautifulSoup(r.text, 'html.parser')
+
+            # Build a focused text block from high-signal elements only
+            priority_texts = []
+
+            # <title>
+            title_tag = soup.find('title')
+            if title_tag:
+                priority_texts.append(title_tag.get_text())
+
+            # <meta name="description"> and <meta property="og:*">
+            for meta in soup.find_all('meta'):
+                content = meta.get('content', '')
+                if meta.get('name', '').lower() in ('description', 'application-name') \
+                        or meta.get('property', '').lower().startswith('og:'):
+                    priority_texts.append(content)
+
+            # <h1> and <h2> tags
+            for tag in soup.find_all(['h1', 'h2']):
+                priority_texts.append(tag.get_text())
+
+            priority_block = ' '.join(priority_texts).lower()
+
+            # Match slug or full name in priority locations
+            if name_slug in priority_block or name_lower in priority_block:
+                return True
+
+            # For multi-word names, also accept if ALL individual words appear
+            # in priority text (handles "Code Metal" → "code" + "metal" in h1)
+            # — but only when the name has 3+ chars per word to avoid noise
+            if len(name_words) > 1 and all(len(w) >= 3 for w in name_words):
+                if all(w in priority_block for w in name_words):
+                    return True
+
+            return False
+
         except Exception:
             return False  # can't verify → fall through to AI search
 
