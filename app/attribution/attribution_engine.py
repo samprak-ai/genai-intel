@@ -3082,9 +3082,15 @@ JSON:"""
         Emit a WEAK cloud signal when founder background keywords match
         FOUNDER_CLOUD_PRIORS (e.g. "Google Brain" → GCP).
 
+        Consensus rule: only emits a signal when ALL matched founders point
+        to the SAME provider. Conflicting backgrounds (e.g. one ex-Google,
+        one ex-Microsoft) are suppressed entirely — mixed priors are noise,
+        not signal. Backgrounds that don't match any prior are ignored.
+
         Only emits one signal per provider. Does not emit AI signals.
         """
-        signals = []
+        # Collect (provider, rationale, background) for every matched background
+        matched: list[tuple[str, str, str]] = []
         seen_providers: set = set()
 
         for background in founder_background:
@@ -3092,16 +3098,23 @@ JSON:"""
             for prior_key, (provider, rationale) in FOUNDER_CLOUD_PRIORS.items():
                 if prior_key in background_lower and provider not in seen_providers:
                     seen_providers.add(provider)
-                    signals.append(AttributionSignal(
-                        provider_type=ProviderType.CLOUD,
-                        provider_name=provider,
-                        signal_source='founder_prior',
-                        signal_strength=SignalStrength.WEAK,
-                        evidence_text=f'{rationale} (background: {background})',
-                        confidence_weight=0.3
-                    ))
+                    matched.append((provider, rationale, background))
 
-        return signals
+        # Suppress if founders point to more than one different provider
+        unique_providers = {m[0] for m in matched}
+        if len(unique_providers) != 1:
+            return []
+
+        # Consensus — emit one signal for the agreed provider
+        provider, rationale, background = matched[0]
+        return [AttributionSignal(
+            provider_type=ProviderType.CLOUD,
+            provider_name=provider,
+            signal_source='founder_prior',
+            signal_strength=SignalStrength.WEAK,
+            evidence_text=f'{rationale} (background: {background})',
+            confidence_weight=0.3
+        )]
 
     # ========================================================================
     # TIER 4: LLM FALLBACK
