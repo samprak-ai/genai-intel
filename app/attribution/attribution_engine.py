@@ -312,6 +312,16 @@ _OWNERSHIP_VERBS_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Possessive ownership markers in job descriptions — phrases within ~40 chars of a
+# provider keyword that indicate the company's *own* infrastructure, not a skill list.
+# E.g. "our internal AWS environment", "our primary GCP project", "own Azure tenant".
+_JOB_OWNERSHIP_RE = re.compile(
+    r'\b(our\s+(?:internal|primary|own|production|core|main)\b|'
+    r'\binternal\s+\w{0,20}\s*(?:AWS|GCP|Azure|cloud)\b|'
+    r'\bprimary\s+(?:cloud|provider|environment)\b)',
+    re.IGNORECASE,
+)
+
 # Verbs that indicate the provider is a target/customer environment, not the company's own
 # ("secure your AWS", "protect Azure workloads", "monitor GCP environments")
 _PRODUCT_VERBS_RE = re.compile(
@@ -422,7 +432,24 @@ def _scan_job_sentences(text: str, keyword_map: dict, ai_keyword_map: Optional[d
         if len(matched_providers) >= 2 and _is_conjunctive_sentence(
             sentence, matched_providers, keyword_map
         ):
-            continue   # discard — "AWS, Azure, GCP" style skill-list noise
+            # Before discarding, rescue providers that have an ownership marker
+            # within ~50 chars of their keyword — e.g. "our internal AWS environment"
+            # where AWS is clearly the company's own infra, not a skill-list entry.
+            rescued: dict = {}
+            sentence_lower = sentence.lower()
+            for provider, kws in sent_matches.items():
+                for kw in kws:
+                    pos = sentence_lower.find(kw.strip())
+                    if pos == -1:
+                        continue
+                    window = sentence[max(0, pos - 50): pos + len(kw) + 50]
+                    if _JOB_OWNERSHIP_RE.search(window) or _OWNERSHIP_VERBS_RE.search(window):
+                        rescued[provider] = kws
+                        break
+            if rescued:
+                sent_matches = rescued   # keep only ownership-marked providers
+            else:
+                continue   # discard — "AWS, Azure, GCP" style skill-list noise
 
         # For AI providers: discard sentences that read as hiring requirements.
         # "Experience with OpenAI required" is a skill requirement, not infra proof.
@@ -932,13 +959,24 @@ class AttributionEngine:
             return None
 
         # ── All-3-providers guard ─────────────────────────────────────────────
-        # If AWS, Azure, AND GCP are all present, the signals are uninformative
-        # (cloud security tools, integration marketplaces, etc. always list all
-        # three). Treat as Unknown rather than fabricating a multi-cloud result.
+        # If AWS, Azure, AND GCP are all present from shallow sources only
+        # (tech_blog, partnership_announcement, website content), the signals are
+        # uninformative — cloud security tools, integration marketplaces, and AI
+        # platforms all list all three as supported environments.
+        # EXCEPTION: if any of the three has an owned-infra signal (dns, ip_asn,
+        # job_posting) we trust that evidence and let it through.
+        _OWNED_INFRA_SOURCES = {'dns', 'ip_asn', 'job_posting', 'subprocessors'}
         if provider_type == ProviderType.CLOUD:
             detected = {s.provider_name for s in signals}
             if {'AWS', 'GCP', 'Azure'}.issubset(detected):
-                return None   # Unknown — all-3 is as good as none
+                # Check if any of the big-3 has a strong owned-infra source
+                big3_owned = {
+                    s.provider_name for s in signals
+                    if s.provider_name in {'AWS', 'GCP', 'Azure'}
+                    and s.signal_source in _OWNED_INFRA_SOURCES
+                }
+                if not big3_owned:
+                    return None   # Unknown — all-3 from shallow sources is noise
 
         # Group signals and scores by provider
         provider_scores: dict[str, float] = defaultdict(float)
@@ -2451,26 +2489,41 @@ JSON:"""
         # Startups that use non-standard boards (Gem, Rippling, Workday, etc.)
         # almost always link to their careers page from their homepage or /blog footer.
         # We scrape those links and add any recognised job board URLs to the probe list.
+        #
+        # Also handles Ashby embedded on the company's own domain — some companies
+        # (e.g. braintrust.dev/careers?ashby_jid=...) serve Ashby's board directly
+        # from their own subdomain/path rather than from jobs.ashbyhq.com.  These pages
+        # still embed window.__appData with the full job listing JSON, so we detect the
+        # pattern by probing /careers and /jobs for ashby_jid query-param links and,
+        # when found, treat the company career page as an Ashby board index.
         if website:
-            try:
-                r_home = requests.get(
-                    f'https://{website.lstrip("https://").lstrip("http://")}',
-                    timeout=self.TIMEOUT, headers=self.HEADERS, verify=False
-                )
-                if r_home.status_code == 200:
+            base = f'https://{website.lstrip("https://").lstrip("http://")}'
+            for home_url in [base, f'{base}/careers', f'{base}/jobs']:
+                try:
+                    r_home = requests.get(
+                        home_url, timeout=self.TIMEOUT, headers=self.HEADERS, verify=False
+                    )
+                    if r_home.status_code != 200:
+                        continue
                     home_soup = BeautifulSoup(r_home.text, 'html.parser')
+                    ashby_embedded = False
                     for a in home_soup.find_all('a', href=True):
                         href = a['href']
-                        if not href.startswith('http'):
-                            continue
-                        parsed_href = urlparse(href)
-                        if any(parsed_href.netloc == bd or parsed_href.netloc.endswith('.' + bd)
-                               for bd in _KNOWN_JOB_BOARD_DOMAINS):
-                            # Add the full company listing URL if it's not already in probe list
-                            if href not in board_index_urls:
-                                board_index_urls.append(href)
-            except Exception:
-                pass
+                        # Absolute links to known external job board domains
+                        if href.startswith('http'):
+                            parsed_href = urlparse(href)
+                            if any(parsed_href.netloc == bd or parsed_href.netloc.endswith('.' + bd)
+                                   for bd in _KNOWN_JOB_BOARD_DOMAINS):
+                                if href not in board_index_urls:
+                                    board_index_urls.append(href)
+                        # Relative links with ?ashby_jid= — Ashby embedded on own domain
+                        if 'ashby_jid=' in href and not ashby_embedded:
+                            # The current page IS the Ashby board index — add it
+                            if home_url not in board_index_urls:
+                                board_index_urls.append(home_url)
+                            ashby_embedded = True
+                except Exception:
+                    continue
 
         # Collect individual job listing URLs by crawling the board index
         individual_job_urls: list[str] = []
@@ -2504,7 +2557,15 @@ JSON:"""
                 # HTML has no <a href> job links, only CDN assets.  Fall back to
                 # parsing window.__appData from the inline <script> tag, which
                 # contains the full job listing JSON including individual posting IDs.
-                if not individual_job_urls and 'ashbyhq.com' in index_url:
+                #
+                # This also covers companies that embed Ashby on their own domain
+                # (e.g. braintrust.dev/careers?ashby_jid=...) — the page still
+                # contains window.__appData even though the URL is not on ashbyhq.com.
+                is_ashby_page = (
+                    'ashbyhq.com' in index_url
+                    or bool(soup.find('script', string=re.compile(r'window\.__appData')))
+                )
+                if not individual_job_urls and is_ashby_page:
                     individual_job_urls.extend(
                         self._extract_ashby_job_urls(index_url, soup)
                     )
@@ -2667,8 +2728,15 @@ JSON:"""
                 # Ashby individual job pages are React SPAs — job description
                 # text lives in window.__appData.posting.descriptionPlainText,
                 # not in rendered HTML.  Extract it before stripping <script> tags.
+                # Also fires when Ashby is embedded on the company's own domain
+                # (detected via window.__appData in the page, or ashby_jid in URL).
                 extra_text = ''
-                if 'ashbyhq.com' in url:
+                is_ashby_job = (
+                    'ashbyhq.com' in url
+                    or 'ashby_jid=' in url
+                    or bool(soup.find('script', string=re.compile(r'window\.__appData')))
+                )
+                if is_ashby_job:
                     extra_text = self._extract_ashby_posting_text(soup)
                 # Getro-based VC job boards (8VC, a16z, etc.) are Next.js SPAs.
                 # Job description text is in __NEXT_DATA__ initialState.jobs.currentJob.description.
