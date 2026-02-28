@@ -312,13 +312,36 @@ _OWNERSHIP_VERBS_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Possessive ownership markers in job descriptions — phrases within ~40 chars of a
+# Possessive ownership markers in job descriptions — phrases within ~50 chars of a
 # provider keyword that indicate the company's *own* infrastructure, not a skill list.
 # E.g. "our internal AWS environment", "our primary GCP project", "own Azure tenant".
 _JOB_OWNERSHIP_RE = re.compile(
     r'\b(our\s+(?:internal|primary|own|production|core|main)\b|'
     r'\binternal\s+\w{0,20}\s*(?:AWS|GCP|Azure|cloud)\b|'
     r'\bprimary\s+(?:cloud|provider|environment)\b)',
+    re.IGNORECASE,
+)
+
+# Explicit primacy declarations in job postings — "{provider} primarily" or
+# "primarily {provider}" — the strongest possible signal that a specific provider
+# is the company's main cloud, even in a multi-cloud context.
+# E.g. "AWS primarily, with Azure and GCP for enterprise customers"
+#      "primarily on GCP, with some Azure workloads"
+_PROVIDER_PRIMARILY_RE = re.compile(
+    r'(?:'
+    r'(?P<before>AWS|GCP|Google Cloud|Azure|Cloudflare|Vercel|Netlify)\s+primarily'
+    r'|primarily\s+(?:on\s+)?(?P<after>AWS|GCP|Google Cloud|Azure|Cloudflare|Vercel|Netlify)'
+    r')',
+    re.IGNORECASE,
+)
+
+# Customer-deployment qualifier — phrases that indicate a provider is used for
+# customer/enterprise deployments, not the company's own primary infrastructure.
+# "with Azure and GCP support for enterprise customers"
+# "Azure and GCP available for on-prem deployments"
+_CUSTOMER_DEPLOY_RE = re.compile(
+    r'\b(?:support\s+for|available\s+for|option\s+for|for\s+(?:enterprise|on.prem|self.host))\s+'
+    r'(?:enterprise\s+)?(?:customers?|deployments?|installations?|tenants?)\b',
     re.IGNORECASE,
 )
 
@@ -396,7 +419,11 @@ def _is_conjunctive_sentence(
     return False
 
 
-def _scan_job_sentences(text: str, keyword_map: dict, ai_keyword_map: Optional[dict] = None) -> dict:
+def _scan_job_sentences(
+    text: str,
+    keyword_map: dict,
+    ai_keyword_map: Optional[dict] = None,
+) -> tuple:
     """
     Sentence-aware wrapper around _keyword_scan() for job posting text.
 
@@ -407,17 +434,28 @@ def _scan_job_sentences(text: str, keyword_map: dict, ai_keyword_map: Optional[d
          the providers sit close together with a list connector between them.
          Example discarded: "AWS, Azure, or GCP experience preferred"
          Example kept:      "architecture spans mixed AWS/on-prem nodes"
+      3a. Rescues providers from conjunctive sentences when an explicit primacy
+          declaration is present ("AWS primarily, with Azure and GCP for enterprise
+          customers") — only the named-primary provider is kept, customer-deployment
+          providers are suppressed, and the primary is tagged for extra weight.
+      3b. Rescues providers from conjunctive sentences when a possessive/ownership
+          marker is present in the surrounding context ("our internal AWS environment").
       4. For AI keywords only: discards sentences that contain hiring-requirement
          phrases ("experience with", "familiarity with", "nice to have", etc.)
          since those indicate candidate skill requirements, not infrastructure usage.
          Example discarded: "Experience with OpenAI API required"
          Example kept:      "Build pipelines integrating our OpenAI-powered API"
-      5. Union-merges signals from all non-conjunctive sentences.
+      5. Union-merges signals from all non-conjunctive / rescued sentences.
 
-    A provider survives if it appears in at least one non-conjunctive sentence.
-    Returns the same {provider_name: [matched_keywords]} format as _keyword_scan().
+    Returns:
+        (matches, primary_providers) where:
+          matches          — {provider_name: [matched_keywords]}  (same as _keyword_scan)
+          primary_providers — set of provider names explicitly declared as primary
+                             via "X primarily" / "primarily X" patterns — caller should
+                             boost their signal weight to reflect explicit primacy.
     """
     merged: dict = {}
+    merged_primary: set = set()   # providers with explicit "X primarily" declaration
     # Identify which providers are AI providers for the hiring-phrase filter
     ai_providers = set(ai_keyword_map.keys()) if ai_keyword_map else set()
 
@@ -432,24 +470,47 @@ def _scan_job_sentences(text: str, keyword_map: dict, ai_keyword_map: Optional[d
         if len(matched_providers) >= 2 and _is_conjunctive_sentence(
             sentence, matched_providers, keyword_map
         ):
-            # Before discarding, rescue providers that have an ownership marker
-            # within ~50 chars of their keyword — e.g. "our internal AWS environment"
-            # where AWS is clearly the company's own infra, not a skill-list entry.
-            rescued: dict = {}
-            sentence_lower = sentence.lower()
-            for provider, kws in sent_matches.items():
-                for kw in kws:
-                    pos = sentence_lower.find(kw.strip())
-                    if pos == -1:
-                        continue
-                    window = sentence[max(0, pos - 50): pos + len(kw) + 50]
-                    if _JOB_OWNERSHIP_RE.search(window) or _OWNERSHIP_VERBS_RE.search(window):
-                        rescued[provider] = kws
-                        break
-            if rescued:
-                sent_matches = rescued   # keep only ownership-marked providers
+            # ── Pass 1: explicit primacy declaration ──────────────────────────
+            # "AWS primarily, with Azure and GCP support for enterprise customers"
+            # The named-primary provider is rescued with a 'primarily' marker so
+            # the caller can give it extra weight.  Customer-deployment providers
+            # (appearing after "support for enterprise customers") are suppressed.
+            prim_match = _PROVIDER_PRIMARILY_RE.search(sentence)
+            if prim_match:
+                primary_name = (prim_match.group('before') or prim_match.group('after') or '').upper()
+                # Normalise to our provider name (GCP vs Google Cloud)
+                _alias = {'GOOGLE CLOUD': 'GCP'}
+                primary_name = _alias.get(primary_name, primary_name)
+                # Rescue only the primary provider; suppress the rest
+                rescued = {p: kws for p, kws in sent_matches.items() if p.upper() == primary_name}
+                if rescued:
+                    # Tag the primary provider so caller can boost weight
+                    sent_matches = rescued
+                    for p in rescued:
+                        if p not in merged_primary:
+                            merged_primary.add(p)
+                    # Fall through to normal merge below
+                else:
+                    continue
             else:
-                continue   # discard — "AWS, Azure, GCP" style skill-list noise
+                # ── Pass 2: possessive / ownership-verb rescue ────────────────
+                # "our internal AWS environment" — rescue providers with nearby
+                # ownership markers; discard the rest.
+                rescued = {}
+                sentence_lower = sentence.lower()
+                for provider, kws in sent_matches.items():
+                    for kw in kws:
+                        pos = sentence_lower.find(kw.strip())
+                        if pos == -1:
+                            continue
+                        window = sentence[max(0, pos - 50): pos + len(kw) + 50]
+                        if _JOB_OWNERSHIP_RE.search(window) or _OWNERSHIP_VERBS_RE.search(window):
+                            rescued[provider] = kws
+                            break
+                if rescued:
+                    sent_matches = rescued
+                else:
+                    continue   # discard — "AWS, Azure, GCP" style skill-list noise
 
         # For AI providers: discard sentences that read as hiring requirements.
         # "Experience with OpenAI required" is a skill requirement, not infra proof.
@@ -472,7 +533,7 @@ def _scan_job_sentences(text: str, keyword_map: dict, ai_keyword_map: Optional[d
                 if kw not in merged[provider]:
                     merged[provider].append(kw)
 
-    return merged
+    return merged, merged_primary
 
 
 def _classify_website_sentences(text: str, keyword_map: dict) -> dict:
@@ -2750,35 +2811,48 @@ JSON:"""
                     text = text + ' ' + extra_text
 
                 # Cloud keyword scan — sentence-aware to suppress conjunctive
-                # skill-list noise ("AWS, Azure, or GCP experience preferred")
-                cloud_matches = _scan_job_sentences(text, CLOUD_KEYWORDS)
+                # skill-list noise ("AWS, Azure, or GCP experience preferred").
+                # Returns (matches, primary_providers) — primary_providers are
+                # explicitly declared via "X primarily" patterns and get boosted
+                # weight (1.0 vs 0.6) since they name the company's main cloud.
+                cloud_matches, cloud_primary = _scan_job_sentences(text, CLOUD_KEYWORDS)
                 for provider, keywords in cloud_matches.items():
                     if provider not in found_cloud:
                         found_cloud.add(provider)
+                        is_primary = provider in cloud_primary
                         signals.append(AttributionSignal(
                             provider_type=ProviderType.CLOUD,
                             provider_name=provider,
                             signal_source='job_posting',
-                            signal_strength=SignalStrength.MEDIUM,
-                            evidence_text=f'Job posting mentions: {", ".join(keywords[:3])}',
+                            signal_strength=SignalStrength.STRONG if is_primary else SignalStrength.MEDIUM,
+                            evidence_text=(
+                                f'Job posting declares primary cloud: {", ".join(keywords[:3])}'
+                                if is_primary else
+                                f'Job posting mentions: {", ".join(keywords[:3])}'
+                            ),
                             evidence_url=url,
-                            confidence_weight=0.6
+                            confidence_weight=1.0 if is_primary else 0.6
                         ))
 
                 # AI keyword scan — includes hiring-phrase filter to suppress
                 # candidate skill requirements ("experience with OpenAI required")
-                ai_matches = _scan_job_sentences(text, AI_KEYWORDS, ai_keyword_map=AI_KEYWORDS)
+                ai_matches, ai_primary = _scan_job_sentences(text, AI_KEYWORDS, ai_keyword_map=AI_KEYWORDS)
                 for provider, keywords in ai_matches.items():
                     if provider not in found_ai:
                         found_ai.add(provider)
+                        is_primary = provider in ai_primary
                         signals.append(AttributionSignal(
                             provider_type=ProviderType.AI,
                             provider_name=provider,
                             signal_source='job_posting',
-                            signal_strength=SignalStrength.MEDIUM,
-                            evidence_text=f'Job posting mentions: {", ".join(keywords[:3])}',
+                            signal_strength=SignalStrength.STRONG if is_primary else SignalStrength.MEDIUM,
+                            evidence_text=(
+                                f'Job posting declares primary AI provider: {", ".join(keywords[:3])}'
+                                if is_primary else
+                                f'Job posting mentions: {", ".join(keywords[:3])}'
+                            ),
                             evidence_url=url,
-                            confidence_weight=0.6
+                            confidence_weight=1.0 if is_primary else 0.6
                         ))
 
                 # Once we have at least one cloud and one AI signal, stop scanning
