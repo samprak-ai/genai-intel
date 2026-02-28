@@ -1647,224 +1647,161 @@ class AttributionEngine:
             pass
 
         # ------------------------------------------------------------------ #
-        # SOURCE 2: Brave Search API (per-provider fallback)                  #
-        # Runs only for providers not already found via Google News.           #
-        # No sleeps needed — proper API with rate limits, not HTML scraping.  #
+        # SOURCE 2: Brave Search API — 3 batched queries (was: 21+16=37)    #
+        #                                                                    #
+        # Instead of one query per provider (21 calls), we fire 3 batched   #
+        # OR-queries covering all providers in a single round-trip each:    #
+        #   Batch A — Hyperscalers (AWS / GCP / Azure)                      #
+        #   Batch B — Neo/GPU clouds                                         #
+        #   Batch C — AI providers                                           #
+        #                                                                    #
+        # Results are parsed with _classify_entry (same as Google News),    #
+        # which already handles all provider terms via _PROVIDER_TERM_MAP.  #
+        # Inverted site: searches are kept only for the 3 hyperscalers      #
+        # (they publish customer case studies; AI providers don't).         #
         # ------------------------------------------------------------------ #
-        provider_queries = {
-            # Hyperscalers
-            'AWS':        (ProviderType.CLOUD, ['Amazon Web Services', 'AWS']),
-            'GCP':        (ProviderType.CLOUD, ['Google Cloud']),
-            'Azure':      (ProviderType.CLOUD, ['Microsoft Azure', 'Azure']),
-            # Neo/GPU clouds
-            'CoreWeave':  (ProviderType.CLOUD, ['CoreWeave']),
-            'Lambda':     (ProviderType.CLOUD, ['Lambda Labs', 'lambda.cloud']),
-            'Crusoe':     (ProviderType.CLOUD, ['Crusoe Cloud', 'Crusoe Energy']),
-            'OVH':        (ProviderType.CLOUD, ['OVHcloud', 'OVH Cloud']),
-            'Vultr':      (ProviderType.CLOUD, ['Vultr']),
-            'Paperspace': (ProviderType.CLOUD, ['Paperspace', 'Gradient by Paperspace']),
-            'Nebius':     (ProviderType.CLOUD, ['Nebius AI', 'Nebius Cloud']),
-            'OCI':        (ProviderType.CLOUD, ['Oracle Cloud']),
-            # AI providers — established
-            'OpenAI':       (ProviderType.AI,    ['OpenAI']),
-            'Anthropic':    (ProviderType.AI,    ['Anthropic', 'Claude API']),
-            'Google AI':    (ProviderType.AI,    ['Vertex AI', 'Gemini API', 'Google AI Studio']),
-            'Cohere':       (ProviderType.AI,    ['Cohere']),
-            'Mistral':      (ProviderType.AI,    ['Mistral AI', 'Mixtral']),
-            # AI providers — open-source / inference
-            'Meta / Llama': (ProviderType.AI,    ['Meta Llama', 'Llama 3', 'Llama 2']),
-            'xAI / Grok':   (ProviderType.AI,    ['xAI Grok', 'Grok API']),
-            'Hugging Face': (ProviderType.AI,    ['Hugging Face', 'HuggingFace inference']),
-            'Together AI':  (ProviderType.AI,    ['Together AI', 'together.ai']),
-            'Groq':         (ProviderType.AI,    ['Groq inference', 'Groq API']),
-        }
 
         brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
 
-        for provider, (ptype, query_terms) in provider_queries.items():
-            if provider in found_providers:
-                continue   # already have a signal from Google News
-
-            if not brave_key:
-                break      # no API key — skip all Brave fallback calls
-
-            # Build a targeted Brave query:
-            #   "<company>" OR domain_stem  +  "provider term"  +  action keywords
-            # Quoting both company name and provider keeps results specific.
-            # Domain stem (e.g. "ricursive") catches legal-name variants in articles.
+        if brave_key:
             company_q = f'"{company_name}"'
             if domain_stem and domain_stem not in company_lower:
                 company_q = f'{company_q} OR {domain_stem}'
+            action_kw = 'partnership OR announces OR integrates OR "built on" OR "powered by" OR deal OR raises'
 
-            primary_term = query_terms[0]  # most specific canonical term
-            brave_q = (
-                f'{company_q} "{primary_term}" '
-                f'partnership OR announces OR integrates OR "built on" OR "powered by" OR deal'
-            )
+            # Provider terms grouped into 3 batches — all piped into one query each
+            _brave_batches = [
+                # Batch A: Hyperscalers
+                ('cloud_hyper', ProviderType.CLOUD,
+                 '"Amazon Web Services" OR AWS OR "Google Cloud" OR "Microsoft Azure" OR Azure'),
+                # Batch B: Neo/GPU clouds
+                ('cloud_neo', ProviderType.CLOUD,
+                 'CoreWeave OR "Lambda Labs" OR Crusoe OR OVHcloud OR Vultr OR Paperspace OR Nebius OR "Oracle Cloud"'),
+                # Batch C: AI providers
+                ('ai', ProviderType.AI,
+                 'OpenAI OR Anthropic OR "Vertex AI" OR "Gemini API" OR Cohere OR Mistral OR '
+                 '"Meta Llama" OR "Hugging Face" OR "Together AI" OR Groq OR "xAI"'),
+            ]
 
-            try:
-                brave_r = requests.get(
-                    'https://api.search.brave.com/res/v1/web/search',
-                    headers={
-                        'Accept': 'application/json',
-                        'Accept-Encoding': 'gzip',
-                        'X-Subscription-Token': brave_key,
-                    },
-                    params={'q': brave_q, 'count': 10, 'text_decorations': False},
-                    timeout=self.TIMEOUT,
-                )
-                if brave_r.status_code != 200:
+            def _parse_brave_age(age: str):
+                """Map Brave age string → (strength, weight, label)."""
+                age_lower = age.lower()
+                if any(x in age_lower for x in ['hour', 'day', 'week', 'month']):
+                    return SignalStrength.STRONG, 1.0, age
+                elif 'year' in age_lower and not any(str(n) in age_lower for n in range(2, 10)):
+                    return SignalStrength.MEDIUM, 0.6, age
+                elif age_lower:
+                    return SignalStrength.WEAK, 0.3, age
+                else:
+                    return SignalStrength.MEDIUM, 0.6, 'unknown date'
+
+            for _batch_id, _ptype, provider_terms_str in _brave_batches:
+                # Skip batch entirely if all providers in it are already found
+                # (quick heuristic — _classify_entry will skip duplicates anyway)
+                try:
+                    batch_q = f'{company_q} ({provider_terms_str}) {action_kw}'
+                    batch_r = requests.get(
+                        'https://api.search.brave.com/res/v1/web/search',
+                        headers={
+                            'Accept': 'application/json',
+                            'Accept-Encoding': 'gzip',
+                            'X-Subscription-Token': brave_key,
+                        },
+                        params={'q': batch_q, 'count': 10, 'text_decorations': False},
+                        timeout=self.TIMEOUT,
+                    )
+                    if batch_r.status_code != 200:
+                        continue
+
+                    for item in batch_r.json().get('web', {}).get('results', []):
+                        title   = item.get('title', '')
+                        url     = item.get('url', '')
+                        snippet = item.get('description', '')
+                        age     = item.get('age', '')
+
+                        if not _is_valid_title(title):
+                            continue
+
+                        strength, weight, age_label = _parse_brave_age(age)
+
+                        for ptype, provider, wt_multiplier in _classify_entry(title, snippet):
+                            if provider not in found_providers:
+                                found_providers.add(provider)
+                                signals.append(AttributionSignal(
+                                    provider_type=ptype,
+                                    provider_name=provider,
+                                    signal_source='partnership_announcement',
+                                    signal_strength=strength,
+                                    evidence_text=f'Partnership news ({age_label}): {title[:100]}',
+                                    evidence_url=url,
+                                    confidence_weight=weight * wt_multiplier,
+                                ))
+
+                except Exception:
                     continue
 
-                brave_data = brave_r.json()
-                web_results = brave_data.get('web', {}).get('results', [])
-
-                for item in web_results:
-                    title   = item.get('title', '')
-                    url     = item.get('url', '')
-                    snippet = item.get('description', '')
-                    age     = item.get('age', '')   # e.g. "3 months ago", "2 years ago"
-
-                    if not _is_valid_title(title):
-                        continue
-
-                    # At least one provider term must appear in title or snippet
-                    entry_text = f'{title} {snippet}'.lower()
-                    provider_terms_lower = [t.lower() for t in query_terms]
-                    if not any(t in entry_text for t in provider_terms_lower):
-                        continue
-
-                    # Brave's `age` field is a human-readable string — map it to
-                    # temporal weight. Falls back to MEDIUM when age is absent/unknown.
-                    age_lower = age.lower()
-                    if any(x in age_lower for x in ['hour', 'day', 'week', 'month']):
-                        strength, weight, age_label = SignalStrength.STRONG, 1.0, age
-                    elif 'year' in age_lower and not any(
-                        str(n) in age_lower for n in range(2, 10)
-                    ):
-                        # "1 year ago" → MEDIUM; "2 years ago" and above → WEAK
-                        strength, weight, age_label = SignalStrength.MEDIUM, 0.6, age
-                    elif age_lower:
-                        strength, weight, age_label = SignalStrength.WEAK, 0.3, age
-                    else:
-                        strength, weight, age_label = SignalStrength.MEDIUM, 0.6, 'unknown date'
-
-                    if provider not in found_providers:
-                        found_providers.add(provider)
-                        signals.append(AttributionSignal(
-                            provider_type=ptype,
-                            provider_name=provider,
-                            signal_source='partnership_announcement',
-                            signal_strength=strength,
-                            evidence_text=f'Partnership news ({age_label}): {title[:100]}',
-                            evidence_url=url,
-                            confidence_weight=weight
-                        ))
-                        break   # one signal per provider
-
-            except Exception:
-                continue
-
             # ---------------------------------------------------------------- #
-            # INVERTED SEARCH: search from the provider's side                 #
-            # e.g. site:coreweave.com "Runway" — catches press releases        #
-            # published on provider domains that may not rank in the startup-  #
-            # centric query above (especially for lesser-known companies).     #
-            # Only runs if the startup-centric query yielded no signal.        #
+            # INVERTED SEARCH — hyperscalers only (3 calls max)               #
+            # site:aws.amazon.com / cloud.google.com / azure.microsoft.com    #
+            # Skipped for AI providers — they rarely publish startup-specific  #
+            # content on their own domains that would rank in Brave.           #
             # ---------------------------------------------------------------- #
-            if provider in found_providers:
-                continue   # startup-centric query already found something
-
-            # Build provider domain for site: restriction
-            provider_domain_map = {
-                # Hyperscalers
-                'AWS':        'aws.amazon.com',
-                'GCP':        'cloud.google.com',
-                'Azure':      'azure.microsoft.com',
-                # Neo/GPU clouds
-                'CoreWeave':  'coreweave.com',
-                'Lambda':     'lambdalabs.com',
-                'Crusoe':     'crusoe.ai',
-                'OVH':        'ovhcloud.com',
-                'Vultr':      'vultr.com',
-                'Paperspace': 'paperspace.com',
-                'Nebius':     'nebius.ai',
-                'OCI':        'oracle.com',
-                # AI providers
-                'OpenAI':     'openai.com',
-                'Anthropic':  'anthropic.com',
-                'Google AI':  'cloud.google.com',
-                'Cohere':     'cohere.com',
-                'Mistral':    'mistral.ai',
+            _inverted_cloud = {
+                'AWS':   'aws.amazon.com',
+                'GCP':   'cloud.google.com',
+                'Azure': 'azure.microsoft.com',
             }
-            provider_domain = provider_domain_map.get(provider)
-            if not provider_domain:
-                continue
+            for provider, inv_domain in _inverted_cloud.items():
+                if provider in found_providers:
+                    continue  # already have a signal
+                ptype = ProviderType.CLOUD
+                inverted_q = f'site:{inv_domain} "{company_name}"'
+                try:
+                    inv_r = requests.get(
+                        'https://api.search.brave.com/res/v1/web/search',
+                        headers={
+                            'Accept': 'application/json',
+                            'Accept-Encoding': 'gzip',
+                            'X-Subscription-Token': brave_key,
+                        },
+                        params={'q': inverted_q, 'count': 5, 'text_decorations': False},
+                        timeout=self.TIMEOUT,
+                    )
+                    if inv_r.status_code != 200:
+                        continue
 
-            # Query: site:<provider_domain> "<company_name>"
-            # Falls back to un-sited query with provider term if domain is too narrow
-            inverted_q = f'site:{provider_domain} "{company_name}"'
+                    for item in inv_r.json().get('web', {}).get('results', []):
+                        title   = item.get('title', '')
+                        url     = item.get('url', '')
+                        snippet = item.get('description', '')
+                        age     = item.get('age', '')
 
-            try:
-                inv_r = requests.get(
-                    'https://api.search.brave.com/res/v1/web/search',
-                    headers={
-                        'Accept': 'application/json',
-                        'Accept-Encoding': 'gzip',
-                        'X-Subscription-Token': brave_key,
-                    },
-                    params={'q': inverted_q, 'count': 5, 'text_decorations': False},
-                    timeout=self.TIMEOUT,
-                )
-                if inv_r.status_code != 200:
+                        if not _is_valid_title(title):
+                            continue
+
+                        entry_text = f'{title} {snippet}'.lower()
+                        if company_lower not in entry_text and (
+                            not domain_stem or domain_stem not in entry_text
+                        ):
+                            continue
+
+                        strength, weight, age_label = _parse_brave_age(age)
+
+                        if provider not in found_providers:
+                            found_providers.add(provider)
+                            signals.append(AttributionSignal(
+                                provider_type=ptype,
+                                provider_name=provider,
+                                signal_source='partnership_announcement',
+                                signal_strength=strength,
+                                evidence_text=f'Provider news ({age_label}): {title[:100]}',
+                                evidence_url=url,
+                                confidence_weight=weight,
+                            ))
+                            break
+
+                except Exception:
                     continue
-
-                inv_data = inv_r.json()
-                inv_results = inv_data.get('web', {}).get('results', [])
-
-                for item in inv_results:
-                    title   = item.get('title', '')
-                    url     = item.get('url', '')
-                    snippet = item.get('description', '')
-                    age     = item.get('age', '')
-
-                    if not _is_valid_title(title):
-                        continue
-
-                    # Confirm the company name appears in title or snippet
-                    entry_text = f'{title} {snippet}'.lower()
-                    if company_lower not in entry_text and (
-                        not domain_stem or domain_stem not in entry_text
-                    ):
-                        continue
-
-                    age_lower = age.lower()
-                    if any(x in age_lower for x in ['hour', 'day', 'week', 'month']):
-                        strength, weight, age_label = SignalStrength.STRONG, 1.0, age
-                    elif 'year' in age_lower and not any(
-                        str(n) in age_lower for n in range(2, 10)
-                    ):
-                        strength, weight, age_label = SignalStrength.MEDIUM, 0.6, age
-                    elif age_lower:
-                        strength, weight, age_label = SignalStrength.WEAK, 0.3, age
-                    else:
-                        strength, weight, age_label = SignalStrength.MEDIUM, 0.6, 'unknown date'
-
-                    if provider not in found_providers:
-                        found_providers.add(provider)
-                        signals.append(AttributionSignal(
-                            provider_type=ptype,
-                            provider_name=provider,
-                            signal_source='partnership_announcement',
-                            signal_strength=strength,
-                            evidence_text=f'Provider news ({age_label}): {title[:100]}',
-                            evidence_url=url,
-                            confidence_weight=weight
-                        ))
-                        break
-
-            except Exception:
-                continue
 
         # ------------------------------------------------------------------ #
         # SOURCE 3: Broad company article scan (Brave, body-level keyword)  #
