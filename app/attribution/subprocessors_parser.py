@@ -229,8 +229,12 @@ class SubprocessorsParser:
 
         # Build probe list: root-domain paths first, then subdomain variants
         probe_urls = [f"https://{website}{path}" for path in SUBPROCESSOR_URLS]
+
+        # For subdomain probes, strip any leading "www." so that
+        # "www.usepepper.com" → "trust.usepepper.com" (not "trust.www.usepepper.com")
+        apex_domain = website[4:] if website.startswith("www.") else website
         for subdomain, path in SUBPROCESSOR_SUBDOMAINS:
-            probe_urls.append(f"https://{subdomain}.{website}{path}")
+            probe_urls.append(f"https://{subdomain}.{apex_domain}{path}")
 
         for url in probe_urls:
             html = self._fetch_page(url)
@@ -348,9 +352,9 @@ class SubprocessorsParser:
                 entries = []
                 for edge in edges:
                     node = edge.get('node', {})
-                    name = node.get('name', '').strip()
-                    purpose = node.get('purpose', '').strip()
-                    location = node.get('location', '').strip() or None
+                    name = (node.get('name') or '').strip()
+                    purpose = (node.get('purpose') or '').strip()
+                    location = (node.get('location') or '').strip() or None
                     if name:
                         entries.append(SubprocessorEntry(
                             company_name=name,
