@@ -26,9 +26,16 @@ Signal Tiers:
     - Tech blog posts (migration stories, architecture posts)
     - Homepage / about page keyword mentions
 
-  Tier 4 — LLM fallback (weight mapped from LLM confidence):
-    - Triggered only when attribution confidence < 60% after Tiers 1–3
-    - Claude Haiku reads homepage text + funding article text
+  Tier 4a — Perplexity Sonar search (weight mapped from Perplexity confidence):
+    - Triggered when attribution confidence < 60% after Tiers 1–3
+    - Fires one live web search per needed type (cloud / AI)
+    - Surfaces job postings, blog posts, press releases not fetched by Tier 1–3
+    - Returns citation URLs stored as verifiable evidence_url values
+    - signal_source = 'perplexity_search'
+
+  Tier 4b — Claude Haiku fallback (weight mapped from LLM confidence):
+    - Triggered when confidence still < 60% after Tier 4a
+    - Reads pre-fetched homepage text + funding article text
     - LLM expresses its own 0–100 confidence → mapped to weight 0.3–1.0
     - Grounded: LLM must cite a specific quote from provided text
     - signal_source = 'llm_inference'
@@ -777,48 +784,90 @@ class AttributionEngine:
 
         ai_attribution = self._calculate_attribution(ai_signals, ProviderType.AI)
 
-        # 4. LLM fallback (Tier 4) — only when deterministic signals are weak
-        cloud_needs_llm = (
+        # 4. Fallback tiers — only triggered when deterministic signals are weak
+        cloud_needs_fallback = (
             cloud_attribution is None or
             cloud_attribution.confidence < self.LLM_FALLBACK_THRESHOLD
         )
-        ai_needs_llm = (
+        ai_needs_fallback = (
             ai_attribution is None or
             ai_attribution.confidence < self.LLM_FALLBACK_THRESHOLD
         )
 
-        if (cloud_needs_llm or ai_needs_llm) and self.anthropic_client:
+        if cloud_needs_fallback or ai_needs_fallback:
             needed = []
-            if cloud_needs_llm:
+            if cloud_needs_fallback:
                 needed.append('cloud')
-            if ai_needs_llm:
+            if ai_needs_fallback:
                 needed.append('ai')
-            print(f"  🤖 LLM fallback triggered for: {', '.join(needed)} "
-                  f"(confidence below {self.LLM_FALLBACK_THRESHOLD:.0%})")
 
-            llm_signals = self._llm_attribution_fallback(
-                company_name=company_name,
-                website=website,
-                article_text=article_text,
-                need_cloud=cloud_needs_llm,
-                need_ai=ai_needs_llm,
-            )
+            # ── Tier 4a: Perplexity live web search ──────────────────────────
+            perplexity_key = os.getenv('PERPLEXITY_API_KEY', '')
+            if perplexity_key:
+                print(f"  🔍 Perplexity search triggered for: {', '.join(needed)} "
+                      f"(confidence below {self.LLM_FALLBACK_THRESHOLD:.0%})")
+                perplexity_signals = self._perplexity_attribution_search(
+                    company_name=company_name,
+                    website=website,
+                    need_cloud=cloud_needs_fallback,
+                    need_ai=ai_needs_fallback,
+                )
+                if perplexity_signals:
+                    print(f"    ✅ Perplexity: {len(perplexity_signals)} signals found")
+                    if cloud_needs_fallback:
+                        new_cloud_sigs = cloud_signals + [
+                            s for s in perplexity_signals if s.provider_type == ProviderType.CLOUD
+                        ]
+                        cloud_attribution = self._calculate_attribution(new_cloud_sigs, ProviderType.CLOUD)
+                        # Re-evaluate whether we still need Claude Haiku for cloud
+                        cloud_needs_fallback = (
+                            cloud_attribution is None or
+                            cloud_attribution.confidence < self.LLM_FALLBACK_THRESHOLD
+                        )
+                    if ai_needs_fallback:
+                        new_ai_sigs = ai_signals + [
+                            s for s in perplexity_signals if s.provider_type == ProviderType.AI
+                        ]
+                        ai_attribution = self._calculate_attribution(new_ai_sigs, ProviderType.AI)
+                        ai_needs_fallback = (
+                            ai_attribution is None or
+                            ai_attribution.confidence < self.LLM_FALLBACK_THRESHOLD
+                        )
+                else:
+                    print(f"    ℹ️  Perplexity found no additional signals")
 
-            if llm_signals:
-                print(f"    ✅ LLM inference: {len(llm_signals)} signals")
-                # Merge LLM signals in and recalculate only the types that needed help
-                if cloud_needs_llm:
-                    new_cloud_sigs = cloud_signals + [
-                        s for s in llm_signals if s.provider_type == ProviderType.CLOUD
-                    ]
-                    cloud_attribution = self._calculate_attribution(new_cloud_sigs, ProviderType.CLOUD)
-                if ai_needs_llm:
-                    new_ai_sigs = ai_signals + [
-                        s for s in llm_signals if s.provider_type == ProviderType.AI
-                    ]
-                    ai_attribution = self._calculate_attribution(new_ai_sigs, ProviderType.AI)
-            else:
-                print(f"    ℹ️  LLM found no additional signals")
+            # ── Tier 4b: Claude Haiku — reads pre-fetched homepage + article ─
+            if (cloud_needs_fallback or ai_needs_fallback) and self.anthropic_client:
+                needed_b = []
+                if cloud_needs_fallback:
+                    needed_b.append('cloud')
+                if ai_needs_fallback:
+                    needed_b.append('ai')
+                print(f"  🤖 LLM fallback triggered for: {', '.join(needed_b)} "
+                      f"(confidence below {self.LLM_FALLBACK_THRESHOLD:.0%})")
+
+                llm_signals = self._llm_attribution_fallback(
+                    company_name=company_name,
+                    website=website,
+                    article_text=article_text,
+                    need_cloud=cloud_needs_fallback,
+                    need_ai=ai_needs_fallback,
+                )
+
+                if llm_signals:
+                    print(f"    ✅ LLM inference: {len(llm_signals)} signals")
+                    if cloud_needs_fallback:
+                        new_cloud_sigs = cloud_signals + [
+                            s for s in llm_signals if s.provider_type == ProviderType.CLOUD
+                        ]
+                        cloud_attribution = self._calculate_attribution(new_cloud_sigs, ProviderType.CLOUD)
+                    if ai_needs_fallback:
+                        new_ai_sigs = ai_signals + [
+                            s for s in llm_signals if s.provider_type == ProviderType.AI
+                        ]
+                        ai_attribution = self._calculate_attribution(new_ai_sigs, ProviderType.AI)
+                else:
+                    print(f"    ℹ️  LLM found no additional signals")
 
         # 5. Log summary
         if cloud_attribution:
@@ -3572,7 +3621,192 @@ JSON:"""
         )]
 
     # ========================================================================
-    # TIER 4: LLM FALLBACK
+    # TIER 4a: PERPLEXITY SEARCH FALLBACK
+    # ========================================================================
+
+    def _perplexity_attribution_search(
+        self,
+        company_name: str,
+        website: str,
+        need_cloud: bool,
+        need_ai: bool,
+    ) -> List[AttributionSignal]:
+        """
+        Tier 4a: Use Perplexity Sonar (live web search + LLM) to find cloud/AI
+        provider signals not captured by deterministic tiers 1–3.
+
+        Unlike the Claude Haiku fallback (Tier 4b), Perplexity performs a fresh
+        web search — surfacing job postings, blog posts, press releases, and case
+        studies we never fetched. Each finding comes with citation URLs that we
+        store as verifiable evidence_url values.
+
+        One Sonar query is fired per needed provider type (cloud / AI), using
+        OR-grouped provider names so a single search covers all candidates.
+
+        Confidence → weight mapping (matches Tier 4b scale):
+          80–100 → STRONG  (1.0)
+          50–79  → MEDIUM  (0.6)
+          0–49   → WEAK    (0.3)
+
+        Returns list of AttributionSignal objects (may be empty).
+        """
+        api_key = os.getenv('PERPLEXITY_API_KEY', '')
+        if not api_key:
+            return []
+
+        signals: List[AttributionSignal] = []
+
+        # Canonical provider sets (mirrors Tier 4b validation)
+        valid_cloud = {'AWS', 'GCP', 'Azure', 'CoreWeave', 'OCI', 'Lambda', 'Vast.ai',
+                       'Crusoe', 'OVH', 'Vultr', 'Paperspace', 'Nebius', 'Fluidstack',
+                       'On-Premises', 'Hybrid'}
+        valid_ai    = {'OpenAI', 'Anthropic', 'Google AI', 'Cohere', 'Mistral',
+                       'Meta / Llama', 'xAI / Grok', 'Hugging Face', 'Together AI',
+                       'Groq', 'Replicate'}
+
+        # Build one query per needed type
+        queries: list[tuple[str, str, set]] = []   # (label, query_text, valid_set)
+        if need_cloud:
+            cloud_providers = (
+                'AWS OR "Amazon Web Services" OR "Google Cloud" OR GCP OR '
+                '"Microsoft Azure" OR Azure OR CoreWeave OR OCI OR "Lambda Labs"'
+            )
+            queries.append((
+                'cloud',
+                f'"{company_name}" site:{website} OR "{company_name}" '
+                f'cloud infrastructure {cloud_providers}',
+                valid_cloud,
+            ))
+        if need_ai:
+            ai_providers = (
+                'OpenAI OR Anthropic OR "Google AI" OR "Vertex AI" OR Gemini OR '
+                'Cohere OR Mistral OR "Meta Llama" OR "Hugging Face" OR Groq OR '
+                '"Together AI" OR "xAI" OR Replicate'
+            )
+            queries.append((
+                'ai',
+                f'"{company_name}" AI LLM provider {ai_providers}',
+                valid_ai,
+            ))
+
+        headers = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+        }
+
+        for ptype_label, query, valid_set in queries:
+            ptype = ProviderType.CLOUD if ptype_label == 'cloud' else ProviderType.AI
+
+            system_prompt = (
+                f"You are an infrastructure analyst. The user will ask about {company_name} "
+                f"({website}). Answer ONLY based on what you find in web search results. "
+                f"Be concise and factual. If you cannot find clear evidence, say so."
+            )
+
+            user_prompt = (
+                f"What {ptype_label} provider(s) does {company_name} ({website}) use? "
+                f"Search for evidence in their job postings, blog posts, press releases, "
+                f"privacy/trust pages, and case studies.\n\n"
+                f"Respond with a JSON array of objects. Each object:\n"
+                f"- \"provider_name\": canonical name from this list exactly: "
+                f"{sorted(valid_set)}\n"
+                f"- \"confidence\": integer 0–100\n"
+                f"- \"evidence_quote\": ≤30-word quote from a source you found\n"
+                f"- \"reasoning\": one sentence\n"
+                f"- \"source_url\": the URL where you found this evidence\n\n"
+                f"Rules:\n"
+                f"- Only include providers with confidence ≥ {'60' if ptype_label == 'ai' else '30'}\n"
+                f"- If no clear evidence, return []\n"
+                f"- Return ONLY valid JSON — no markdown, no prose"
+            )
+
+            try:
+                resp = requests.post(
+                    'https://api.perplexity.ai/chat/completions',
+                    headers=headers,
+                    json={
+                        'model': 'sonar',
+                        'messages': [
+                            {'role': 'system', 'content': system_prompt},
+                            {'role': 'user',   'content': user_prompt},
+                        ],
+                        'max_tokens': 600,
+                        'temperature': 0.1,   # Low temp for factual attribution
+                        'search_recency_filter': 'year',
+                    },
+                    timeout=20,
+                )
+                if resp.status_code != 200:
+                    print(f"    ⚠️  Perplexity API error {resp.status_code}: {resp.text[:120]}")
+                    continue
+
+                data = resp.json()
+                raw = data['choices'][0]['message']['content'].strip()
+
+                # Citations returned by Perplexity — use as fallback evidence_url
+                citations: list[str] = data.get('citations', [])
+                fallback_url = citations[0] if citations else f'https://{website}'
+
+            except Exception as e:
+                print(f"    ⚠️  Perplexity request failed: {e}")
+                continue
+
+            # ── Parse JSON response ──────────────────────────────────────────
+            try:
+                if raw.startswith('```'):
+                    raw = re.sub(r'^```[a-z]*\n?', '', raw)
+                    raw = re.sub(r'\n?```$', '', raw)
+
+                findings = json.loads(raw)
+                if not isinstance(findings, list):
+                    continue
+
+                for item in findings:
+                    provider_name = str(item.get('provider_name', '')).strip()
+                    confidence    = int(item.get('confidence', 0))
+                    evidence      = str(item.get('evidence_quote', '')).strip()
+                    reasoning     = str(item.get('reasoning', '')).strip()
+                    source_url    = str(item.get('source_url', '')).strip() or fallback_url
+
+                    if provider_name not in valid_set:
+                        continue
+
+                    # Hard floors (same as Tier 4b)
+                    if ptype == ProviderType.AI and confidence < 60:
+                        continue
+                    if ptype == ProviderType.CLOUD and confidence < 30:
+                        continue
+
+                    if confidence >= 80:
+                        strength = SignalStrength.STRONG
+                        weight   = 1.0
+                    elif confidence >= 50:
+                        strength = SignalStrength.MEDIUM
+                        weight   = 0.6
+                    else:
+                        strength = SignalStrength.WEAK
+                        weight   = 0.3
+
+                    signals.append(AttributionSignal(
+                        provider_type=ptype,
+                        provider_name=provider_name,
+                        signal_source='perplexity_search',
+                        signal_strength=strength,
+                        evidence_text=(
+                            f'Perplexity ({confidence}% conf): "{evidence}" — {reasoning}'
+                        )[:200],
+                        evidence_url=source_url,
+                        confidence_weight=weight,
+                    ))
+
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+                print(f"    ⚠️  Perplexity parse error: {e} | raw: {raw[:100]}")
+                continue
+
+        return signals
+
+    # ========================================================================
+    # TIER 4b: LLM FALLBACK (Claude Haiku — reads pre-fetched text)
     # ========================================================================
 
     def _llm_attribution_fallback(
