@@ -2470,7 +2470,7 @@ JSON:"""
         # detect career links on the company's own website.
         _KNOWN_JOB_BOARD_DOMAINS = {
             'jobs.lever.co', 'boards.greenhouse.io', 'jobs.ashbyhq.com',
-            'apply.workable.com', 'jobs.gem.com', 'jobs.rippling.com',
+            'apply.workable.com', 'jobs.gem.com', 'jobs.rippling.com', 'ats.rippling.com',
             'careers.jobvite.com', 'job-boards.greenhouse.io',
             'bamboohr.com', 'jobs.smartrecruiters.com', 'icims.com',
             'myworkdayjobs.com',
