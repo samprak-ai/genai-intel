@@ -2547,7 +2547,11 @@ JSON:"""
         # pattern by probing /careers and /jobs for ashby_jid query-param links and,
         # when found, treat the company career page as an Ashby board index.
         if website:
-            base = f'https://{website.lstrip("https://").lstrip("http://")}'
+            # Strip any existing scheme safely — .lstrip() strips *characters*,
+            # not substrings, so 'thirdway.health'.lstrip('https://') incorrectly
+            # eats the leading 't' and 'h'. Use re.sub instead.
+            _clean = re.sub(r'^https?://', '', website)
+            base = f'https://{_clean}'
             for home_url in [base, f'{base}/careers', f'{base}/jobs']:
                 try:
                     r_home = requests.get(
@@ -3753,9 +3757,14 @@ JSON:"""
 
             # ── Parse JSON response ──────────────────────────────────────────
             try:
-                if raw.startswith('```'):
-                    raw = re.sub(r'^```[a-z]*\n?', '', raw)
-                    raw = re.sub(r'\n?```$', '', raw)
+                # Sonar often wraps JSON in markdown fences or appends prose.
+                # Extract the first [...] JSON array robustly rather than
+                # parsing the whole response string.
+                json_match = re.search(r'\[.*?\]', raw, re.DOTALL)
+                if not json_match:
+                    # No JSON array found at all — treat as empty result
+                    continue
+                raw = json_match.group(0)
 
                 findings = json.loads(raw)
                 if not isinstance(findings, list):
