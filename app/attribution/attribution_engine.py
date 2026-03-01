@@ -2528,6 +2528,11 @@ JSON:"""
 
         # Collect individual job listing URLs by crawling the board index
         individual_job_urls: list[str] = []
+        # Maps URL → job title text extracted from anchor text on the board index.
+        # Populated when the board renders job titles in the <a> link text (e.g.
+        # Rippling ATS uses UUID paths like /jobs/<uuid> with no role keywords in
+        # the URL itself, so _is_eng_role() can't sort by URL alone).
+        job_title_map: dict[str, str] = {}
 
         for index_url in board_index_urls:
             try:
@@ -2553,6 +2558,12 @@ JSON:"""
                             and href.rstrip('/') != index_url.rstrip('/')
                             and href not in individual_job_urls):
                         individual_job_urls.append(href)
+                        # Capture anchor text as job title when present — used
+                        # by _is_eng_role() to sort UUID-based job board URLs
+                        # (e.g. Rippling ATS) where the URL has no role keywords.
+                        title_text = a.get_text(strip=True)
+                        if title_text:
+                            job_title_map[href] = title_text
 
                 # Ashby renders job listings client-side (React SPA) — the initial
                 # HTML has no <a href> job links, only CDN assets.  Fall back to
@@ -2706,8 +2717,14 @@ JSON:"""
         # cloud stack requirements.  Hardware, mechanical, RF, FPGA, and other
         # discipline-specific engineering titles rarely mention AWS/GCP/Azure.
         def _is_eng_role(url: str) -> bool:
-            url_lower = url.lower()
-            return any(kw in url_lower for kw in self._CLOUD_ROLE_KEYWORDS)
+            # Prefer job title from the board index HTML (captured in job_title_map)
+            # over URL-keyword matching.  UUID-based boards like Rippling ATS use
+            # paths such as /jobs/<uuid> with no role keywords in the URL — relying
+            # solely on URL text causes relevant postings (e.g. "Information Security
+            # Lead") to sort after unrelated roles and fall outside the 8-page cap.
+            candidate = job_title_map.get(url, url)
+            candidate_lower = candidate.lower()
+            return any(kw in candidate_lower for kw in self._CLOUD_ROLE_KEYWORDS)
 
         # Sort: engineering roles first, then the rest
         sorted_urls = (
@@ -3438,7 +3455,7 @@ JSON:"""
         'data engineer',         # Data Engineer (not "data analyst" or "data scientist")
         'ml engineer',           # ML Engineer
         'machine learning engineer',
-        'security engineer',     # Cloud security often names AWS/GCP services
+        'security',              # Security Engineer / Information Security Lead / Cloud Security
         'network engineer',      # Cloud networking roles (VPCs, transit gateways, etc.)
         'data scientist',        # BigQuery, Vertex AI, SageMaker commonly in job body
         'data analyst',          # Analytics roles at cloud-native companies mention cloud tools
