@@ -308,7 +308,10 @@ _OWNERSHIP_VERBS_RE = re.compile(
     r'\b(built?\s+(?:natively\s+)?on|runs?\s+on|running\s+on|'
     r'powered\s+by|hosted?\s+on|hosted?\s+(?:in|with)|'
     r'deployed?\s+on|operates?\s+on|built?\s+(?:with|using|for)|'
-    r'natively\s+on|infrastructure\s+(?:on|in|runs?\s+on))\b',
+    r'natively\s+on|infrastructure\s+(?:on|in|runs?\s+on)|'
+    r'processed?\s+(?:by|on|through)|stored?\s+(?:on|in|by)|'
+    r'transferred?\s+(?:to|for\s+processing\s+by)|'
+    r'servers?\s+(?:are\s+)?(?:located|hosted|operated))\b',
     re.IGNORECASE,
 )
 
@@ -2833,7 +2836,9 @@ JSON:"""
             # Trust/security pages
             {
                 'paths': ['/security', '/trust', '/privacy', '/compliance',
-                          '/legal/privacy', '/legal/security', '/trust-center'],
+                          '/legal/privacy', '/legal/security', '/trust-center',
+                          '/privacy-policy', '/legal/privacy-policy',
+                          '/data-processing', '/dpa'],
                 'strength': SignalStrength.MEDIUM,
                 'weight': 0.6,
                 'source': 'trust_page',
