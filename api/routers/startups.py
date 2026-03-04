@@ -53,6 +53,7 @@ def list_startups(
     date_to: Optional[str] = Query(None, description="Filter snapshot_date <= this date (YYYY-MM-DD)"),
     vertical: Optional[str] = Query(None, description="Filter by vertical classification"),
     cloud_propensity: Optional[str] = Query(None, description="Filter by cloud propensity: High / Medium / Low"),
+    engagement_tier: Optional[int] = Query(None, description="Filter by engagement tier: 1, 2, or 3"),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
     db: DatabaseClient = Depends(get_db),
@@ -66,6 +67,7 @@ def list_startups(
         date_to=date_to,
         vertical=vertical,
         cloud_propensity=cloud_propensity,
+        engagement_tier=engagement_tier,
         page=page,
         per_page=per_page,
     )
@@ -128,9 +130,10 @@ def create_startup(body: StartupCreate, db: DatabaseClient = Depends(get_db)):
                 db.create_signal(startup_id, signal)
 
     # Persist snapshot
+    from datetime import date as _date
     from pipeline import Pipeline
     p = Pipeline(dry_run=False)
-    snapshot = p._build_snapshot(startup_id, cloud_attr, ai_attr)
+    snapshot = p._build_snapshot(startup_id, cloud_attr, ai_attr, funding_date=_date.today())
     db.create_snapshot(snapshot)
 
     return {
@@ -186,9 +189,17 @@ def re_attribute(startup_id: str, db: DatabaseClient = Depends(get_db)):
                 db.create_signal(startup_id, signal)
 
     # Persist new snapshot
+    from datetime import date as _date
     from pipeline import Pipeline
     p = Pipeline(dry_run=False)
-    snapshot = p._build_snapshot(startup_id, cloud_attr, ai_attr)
+    # Fetch latest announcement date for priority calculation
+    funding_events = db.get_funding_events_for_startup(startup_id)
+    funding_date = None
+    if funding_events:
+        raw_date = funding_events[0].get('announcement_date')
+        if raw_date:
+            funding_date = _date.fromisoformat(str(raw_date))
+    snapshot = p._build_snapshot(startup_id, cloud_attr, ai_attr, funding_date=funding_date)
     db.create_snapshot(snapshot)
 
     # Mark override as fulfilled

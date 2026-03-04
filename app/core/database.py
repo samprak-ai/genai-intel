@@ -86,6 +86,7 @@ class DatabaseClient:
         date_to: Optional[str] = None,
         vertical: Optional[str] = None,
         cloud_propensity: Optional[str] = None,
+        engagement_tier: Optional[int] = None,
         page: int = 1,
         per_page: int = 50,
     ) -> list[dict]:
@@ -112,6 +113,8 @@ class DatabaseClient:
             query = query.eq('vertical', vertical)
         if cloud_propensity:
             query = query.eq('cloud_propensity', cloud_propensity)
+        if engagement_tier is not None:
+            query = query.eq('engagement_tier', engagement_tier)
 
         offset = (page - 1) * per_page
         result = query \

@@ -134,5 +134,14 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
         p = Pipeline(dry_run=dry_run)
         run = p.run_weekly(days_back=days_back, limit=limit)
         _active_run["run_id"] = run.id
+
+        # Recalculate engagement tiers for ALL companies
+        # (days_since_funding changes daily, so tiers may shift)
+        if not dry_run:
+            try:
+                from app.priority import recalculate_all_priorities
+                recalculate_all_priorities()
+            except Exception as e:
+                print(f"  ⚠️  Engagement tier recalculation failed: {e}")
     finally:
         _active_run.clear()

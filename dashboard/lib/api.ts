@@ -96,6 +96,10 @@ export interface StartupRow {
   cloud_propensity?: "High" | "Medium" | "Low";
   classification_confidence?: "high" | "medium" | "low";
   classification_source?: string;
+  // Engagement tier
+  engagement_tier?: number;
+  engagement_tier_label?: string;
+  engagement_tier_rationale?: string;
 }
 
 export interface Signal {
@@ -155,6 +159,7 @@ export const getStartups = (params?: {
   date_to?: string;
   vertical?: string;
   cloud_propensity?: string;
+  engagement_tier?: string;
   page?: number;
   per_page?: number;
 }) => {
@@ -166,6 +171,7 @@ export const getStartups = (params?: {
   if (params?.date_to) qs.set("date_to", params.date_to);
   if (params?.vertical) qs.set("vertical", params.vertical);
   if (params?.cloud_propensity) qs.set("cloud_propensity", params.cloud_propensity);
+  if (params?.engagement_tier) qs.set("engagement_tier", params.engagement_tier);
   if (params?.page) qs.set("page", String(params.page));
   if (params?.per_page) qs.set("per_page", String(params.per_page));
   const query = qs.toString() ? `?${qs}` : "";

@@ -24,6 +24,7 @@ from app.discovery.funding_discovery import FundingDiscovery
 from app.resolution.domain_resolver import DomainResolver
 from app.attribution.attribution_engine import AttributionEngine
 from app.classification.classifier import classify_company
+from app.priority import calculate_priority
 
 load_dotenv(override=True)  # override=True so .env wins over empty shell vars
 
@@ -444,7 +445,7 @@ class Pipeline:
                     self._log_error(f"classify:{event.company_name}", str(e))
 
                 # Save attribution snapshot
-                snapshot_data = self._build_snapshot(startup_id, cloud_attr, ai_attr, classification)
+                snapshot_data = self._build_snapshot(startup_id, cloud_attr, ai_attr, classification, funding_date=event.announcement_date)
                 self.db.create_snapshot(snapshot_data)
 
                 saved += 1
@@ -517,7 +518,7 @@ class Pipeline:
                     self._log_error(f"classify:{event.company_name}", str(e))
 
                 # Save attribution snapshot
-                snapshot_data = self._build_snapshot(startup_id, cloud_attr, ai_attr, classification)
+                snapshot_data = self._build_snapshot(startup_id, cloud_attr, ai_attr, classification, funding_date=event.announcement_date)
                 self.db.create_snapshot(snapshot_data)
 
                 saved += 1
@@ -535,6 +536,7 @@ class Pipeline:
         cloud_attr,
         ai_attr,
         classification=None,
+        funding_date=None,
     ) -> dict:
         """Build the snapshot dict for database storage — matches attribution_snapshots schema exactly"""
         snapshot = {
@@ -570,6 +572,18 @@ class Pipeline:
             "classification_confidence":  classification.classification_confidence if classification else None,
             "classification_source":      classification.classification_source if classification else None,
         }
+
+        # Engagement tier
+        priority = calculate_priority(
+            funding_announcement_date=funding_date,
+            cloud_propensity=classification.cloud_propensity if classification else None,
+            cloud_entrenchment=cloud_attr.providers[0].entrenchment.value if (cloud_attr and cloud_attr.providers) else None,
+        )
+        snapshot["engagement_tier"] = priority.tier
+        snapshot["engagement_tier_label"] = priority.tier_label
+        snapshot["engagement_tier_rationale"] = priority.tier_rationale
+        snapshot["tier_last_calculated"] = datetime.now().isoformat()
+
         return snapshot
 
     # ========================================================================

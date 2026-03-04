@@ -6,6 +6,7 @@ import { ProviderBadge } from "@/components/ProviderBadge";
 import { ConfidenceBar } from "@/components/ConfidenceBar";
 import { EntrenchmentChip } from "@/components/EntrenchmentChip";
 import { PropensityChip } from "@/components/PropensityChip";
+import { EngagementTierChip } from "@/components/EngagementTierChip";
 import { Tooltip } from "@/components/Tooltip";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 const CLOUD_OPTIONS = [{ value: "all", label: "All clouds" }, { value: "AWS", label: "AWS" }, { value: "GCP", label: "GCP" }, { value: "Azure", label: "Azure" }, { value: "CoreWeave", label: "CoreWeave" }];
 const AI_OPTIONS    = [{ value: "all", label: "All AI" }, { value: "Anthropic", label: "Anthropic" }, { value: "OpenAI", label: "OpenAI" }, { value: "Google AI", label: "Google AI" }, { value: "Cohere", label: "Cohere" }, { value: "Mistral", label: "Mistral" }];
 const PROPENSITY_OPTIONS = [{ value: "all", label: "All propensity" }, { value: "High", label: "High" }, { value: "Medium", label: "Medium" }, { value: "Low", label: "Low" }];
+const TIER_OPTIONS = [{ value: "all", label: "All tiers" }, { value: "1", label: "Engage Now" }, { value: "2", label: "Watch" }, { value: "3", label: "Track" }];
 const VERTICAL_OPTIONS = [
   { value: "all", label: "All verticals" },
   { value: "AI Infrastructure & Compute", label: "AI Infra & Compute" },
@@ -46,6 +48,7 @@ export default function CompaniesPage() {
   const [ai, setAi]           = useState("all");
   const [vertical, setVertical] = useState("all");
   const [propensity, setPropensity] = useState("all");
+  const [tier, setTier] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo]     = useState("");
   const [page, setPage]       = useState(1);
@@ -70,6 +73,7 @@ export default function CompaniesPage() {
         ai_provider: ai === "all" ? undefined : ai,
         vertical: vertical === "all" ? undefined : vertical,
         cloud_propensity: propensity === "all" ? undefined : propensity,
+        engagement_tier: tier === "all" ? undefined : tier,
         date_from: dateFrom || undefined,
         date_to: dateTo || undefined,
         page,
@@ -78,7 +82,7 @@ export default function CompaniesPage() {
     } finally { setLoading(false); }
   }
 
-  useEffect(() => { load(); }, [search, cloud, ai, vertical, propensity, dateFrom, dateTo, page]);
+  useEffect(() => { load(); }, [search, cloud, ai, vertical, propensity, tier, dateFrom, dateTo, page]);
 
   return (
     <div className="space-y-6">
@@ -108,13 +112,17 @@ export default function CompaniesPage() {
           <SelectTrigger className="w-40"><SelectValue placeholder="Propensity" /></SelectTrigger>
           <SelectContent>{PROPENSITY_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
         </Select>
+        <Select value={tier} onValueChange={(v) => { setTier(v); setPage(1); }}>
+          <SelectTrigger className="w-40"><SelectValue placeholder="Tier" /></SelectTrigger>
+          <SelectContent>{TIER_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
+        </Select>
         <div className="flex items-center gap-1.5">
           <span className="text-sm text-gray-500 whitespace-nowrap">Updated</span>
           <Input type="date" value={dateFrom} onChange={(e) => { setDateFrom(e.target.value); setPage(1); }} className="w-36 text-sm" />
           <span className="text-sm text-gray-400">–</span>
           <Input type="date" value={dateTo} onChange={(e) => { setDateTo(e.target.value); setPage(1); }} className="w-36 text-sm" />
         </div>
-        <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setCloud("all"); setAi("all"); setVertical("all"); setPropensity("all"); setDateFrom(""); setDateTo(""); setPage(1); }}>Clear</Button>
+        <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setCloud("all"); setAi("all"); setVertical("all"); setPropensity("all"); setTier("all"); setDateFrom(""); setDateTo(""); setPage(1); }}>Clear</Button>
       </div>
 
       <div className="flex gap-2 justify-end">
@@ -137,6 +145,7 @@ export default function CompaniesPage() {
               <TableHead><Tooltip text="Industry vertical classification" position="below">Vertical</Tooltip></TableHead>
               <TableHead><Tooltip text="Sub-vertical within the industry vertical" position="below">Sub-Vertical</Tooltip></TableHead>
               <TableHead><Tooltip text="Structural likelihood of becoming a significant cloud customer" position="below">Propensity</Tooltip></TableHead>
+              <TableHead><Tooltip text="Engagement priority based on funding recency, propensity, and entrenchment" position="below">Tier</Tooltip></TableHead>
               <TableHead>
                 <button onClick={cycleFundingSort} className="flex items-center gap-1 hover:text-gray-900 transition-colors group">
                   <Tooltip text="Largest known funding round" position="below">Funding</Tooltip>
@@ -152,7 +161,7 @@ export default function CompaniesPage() {
           <TableBody>
             {loading
               ? Array.from({ length: 8 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: 13 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                  <TableRow key={i}>{Array.from({ length: 14 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                 ))
               : sortedRows.map((r) => (
                   <TableRow key={r.id} className="hover:bg-gray-50">
@@ -174,6 +183,7 @@ export default function CompaniesPage() {
                     <TableCell className="text-gray-500 text-sm max-w-[160px] whitespace-normal">{r.vertical ?? "—"}</TableCell>
                     <TableCell className="text-gray-500 text-xs max-w-[180px] whitespace-normal">{r.sub_vertical ?? "—"}</TableCell>
                     <TableCell><PropensityChip propensity={r.cloud_propensity} /></TableCell>
+                    <TableCell><EngagementTierChip tier={r.engagement_tier} rationale={r.engagement_tier_rationale} /></TableCell>
                     <TableCell className="text-gray-500 text-sm">
                       {r.funding_amount_usd != null ? `$${r.funding_amount_usd}M` : "—"}
                     </TableCell>
