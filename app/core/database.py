@@ -486,3 +486,33 @@ class DatabaseClient:
             .limit(limit) \
             .execute()
         return result.data if result.data else []
+
+    # ========================================================================
+    # COMPANY TRIGGERS
+    # ========================================================================
+
+    def create_trigger(self, company_id: str, trigger: dict) -> str:
+        """Upsert a company trigger — deduplicates on (company_id, trigger_type, source_url)"""
+        data = {
+            'company_id': company_id,
+            'trigger_type': trigger['trigger_type'],
+            'trigger_label': trigger['trigger_label'],
+            'signal_strength': trigger['signal_strength'],
+            'source_url': trigger.get('source_url'),
+            'detected_date': trigger.get('detected_date', datetime.now().isoformat()),
+        }
+        result = self.client.table('company_triggers') \
+            .upsert(data, on_conflict='company_id,trigger_type,source_url') \
+            .execute()
+        if result.data:
+            return result.data[0]['id']
+        raise Exception(f"Failed to upsert trigger for company {company_id}")
+
+    def get_triggers_for_company(self, company_id: str) -> list[dict]:
+        """Get all triggers for a company, newest first"""
+        result = self.client.table('company_triggers') \
+            .select('*') \
+            .eq('company_id', company_id) \
+            .order('detected_date', desc=True) \
+            .execute()
+        return result.data if result.data else []

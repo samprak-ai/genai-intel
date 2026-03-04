@@ -2484,13 +2484,11 @@ JSON:"""
         except Exception:
             return ''
 
-    def _check_job_postings(self, company_name: str, website: str = "") -> List[AttributionSignal]:
+    def _discover_job_board_urls(
+        self, company_name: str, website: str = ""
+    ) -> tuple[list[str], dict[str, str]]:
         """
-        Search for engineering job postings that reveal tech stack.
-
-        Job postings are excellent Tier 2 signals because companies explicitly
-        list required technologies. "Must have 3+ years AWS experience" is a
-        direct indicator of their infrastructure.
+        Discover all job listing URLs for a company across known job boards.
 
         Three-phase strategy:
           Phase 1 — Board index pages: fetch the company's job board listing
@@ -2498,18 +2496,13 @@ JSON:"""
             job listing URLs linked from it.
           Phase 2 — Investor job boards: probe VC portfolio job boards
             (8VC, a16z, Sequoia, BVP, etc.) for the company's listings.
-            Postings are included even if no longer active, provided they
-            are less than 6 months old (or undated — included by default).
-          Phase 3 — Individual job pages: fetch up to 8 individual engineering
-            role pages and keyword-scan their full text.
+          Phase 3 — Google search fallback for missed boards.
 
-        Scanning the index page alone is insufficient — the index typically
-        shows only job titles and locations, not the tech stack requirements
-        that appear in the full job description.
+        Returns:
+            (all_job_urls, job_title_map) where:
+            - all_job_urls: deduplicated list of individual job posting URLs
+            - job_title_map: dict mapping URL → job title from anchor text
         """
-        signals = []
-        found_cloud: set = set()
-        found_ai: set = set()
 
         slug = company_name.lower().replace(" ", "").replace("-", "")
         # Hyphenated variant — many boards (Ashby, Rippling, Gem) use hyphens
@@ -2764,6 +2757,46 @@ JSON:"""
 
         # Merge investor board URLs into the scan list (deduplicated)
         all_job_urls = individual_job_urls + investor_job_urls
+
+        return all_job_urls, job_title_map
+
+    def count_engineering_roles(
+        self, company_name: str, website: str = ""
+    ) -> tuple[int, list[str]]:
+        """
+        Count engineering/infrastructure job postings for a company.
+
+        Reuses the same board discovery logic as _check_job_postings() but
+        returns (count, urls) instead of scanning pages for cloud keywords.
+        Used by trigger detection for hiring surge detection.
+        """
+        all_job_urls, job_title_map = self._discover_job_board_urls(company_name, website)
+
+        def _is_eng_role(url: str) -> bool:
+            candidate = job_title_map.get(url, url).lower()
+            return any(kw in candidate for kw in self._CLOUD_ROLE_KEYWORDS)
+
+        eng_urls = [u for u in all_job_urls if _is_eng_role(u)]
+        return len(eng_urls), eng_urls
+
+    def _check_job_postings(self, company_name: str, website: str = "") -> List[AttributionSignal]:
+        """
+        Search for engineering job postings that reveal tech stack.
+
+        Job postings are excellent Tier 2 signals because companies explicitly
+        list required technologies. "Must have 3+ years AWS experience" is a
+        direct indicator of their infrastructure.
+
+        Uses _discover_job_board_urls() for board discovery, then scans up to
+        8 individual job pages for cloud/AI keyword signals.
+        """
+        signals = []
+        found_cloud: set = set()
+        found_ai: set = set()
+
+        all_job_urls, job_title_map = self._discover_job_board_urls(company_name, website)
+
+        investor_board_domains = [d for d, _ in INVESTOR_JOB_BOARDS]
 
         # Scan up to 8 individual job pages for tech stack signals.
         # Prioritise software/infra/cloud roles — these are most likely to list

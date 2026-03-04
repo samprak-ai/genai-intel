@@ -100,6 +100,19 @@ export interface StartupRow {
   engagement_tier?: number;
   engagement_tier_label?: string;
   engagement_tier_rationale?: string;
+  // Triggers
+  active_trigger_count?: number;
+}
+
+export interface Trigger {
+  id: string;
+  company_id: string;
+  trigger_type: string;
+  trigger_label: string;
+  signal_strength: "strong" | "moderate" | "weak";
+  source_url?: string;
+  detected_date: string;
+  created_at: string;
 }
 
 export interface Signal {
@@ -186,6 +199,7 @@ export const getStartup = (id: string) =>
     funding_events: Record<string, unknown>[];
     manual_override: Record<string, unknown> | null;
     snapshot_history: Record<string, unknown>[];
+    triggers: Trigger[];
   }>(`/api/startups/${id}`);
 
 export const createStartup = (body: {

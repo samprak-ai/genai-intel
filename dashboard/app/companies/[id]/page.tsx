@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getStartup, patchStartup, reAttribute, Signal } from "@/lib/api";
+import { getStartup, patchStartup, reAttribute, Signal, Trigger } from "@/lib/api";
+import { Badge } from "@/components/ui/badge";
 import { ProviderBadge } from "@/components/ProviderBadge";
 import { ConfidenceBar } from "@/components/ConfidenceBar";
 import { EntrenchmentChip } from "@/components/EntrenchmentChip";
@@ -94,10 +95,11 @@ export default function CompanyDetailPage() {
   );
   if (!data) return <p className="text-red-500">Company not found.</p>;
 
-  const { startup, snapshot, signals, funding_events } = data;
+  const { startup, snapshot, signals, funding_events, triggers } = data;
   const cloudSignals = ((signals ?? []) as Signal[]).filter((s) => s.provider_type === "cloud");
   const aiSignals    = ((signals ?? []) as Signal[]).filter((s) => s.provider_type === "ai");
   const fundingEvents = (funding_events ?? []) as any[];
+  const triggerList = (triggers ?? []) as Trigger[];
 
   return (
     <div className="space-y-8">
@@ -161,6 +163,55 @@ export default function CompanyDetailPage() {
                     <TableCell>${f.funding_amount_usd}M</TableCell>
                     <TableCell className="text-sm text-gray-600">{(f.lead_investors ?? []).join(", ") || "—"}</TableCell>
                     <TableCell><a href={f.source_url} target="_blank" rel="noopener" className="text-xs text-blue-600 hover:underline">{f.source_name}</a></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
+      {triggerList.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Active Triggers</CardTitle></CardHeader>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Date</TableHead><TableHead>Type</TableHead><TableHead>Description</TableHead><TableHead>Strength</TableHead><TableHead>Source</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {triggerList.map((t) => (
+                  <TableRow key={t.id}>
+                    <TableCell className="text-sm whitespace-nowrap">
+                      {new Date(t.detected_date).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    </TableCell>
+                    <TableCell className="text-sm capitalize whitespace-nowrap">
+                      {t.trigger_type.replace(/_/g, " ")}
+                    </TableCell>
+                    <TableCell className="text-sm text-gray-600">{t.trigger_label}</TableCell>
+                    <TableCell>
+                      <Badge
+                        variant="outline"
+                        className={`text-xs ${
+                          t.signal_strength === "strong"
+                            ? "bg-red-100 text-red-700 border-red-200"
+                            : t.signal_strength === "moderate"
+                            ? "bg-amber-100 text-amber-700 border-amber-200"
+                            : "bg-gray-100 text-gray-600 border-gray-200"
+                        }`}
+                      >
+                        {t.signal_strength}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {t.source_url ? (
+                        <a href={t.source_url} target="_blank" rel="noopener" className="text-xs text-blue-600 hover:underline">View source</a>
+                      ) : (
+                        <span className="text-xs text-gray-400">—</span>
+                      )}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

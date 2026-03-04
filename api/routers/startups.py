@@ -87,6 +87,7 @@ def get_startup(startup_id: str, db: DatabaseClient = Depends(get_db)):
         "funding_events": db.get_funding_events_for_startup(startup_id),
         "manual_override": db.get_manual_override(startup_id),
         "snapshot_history": db.get_snapshot_history(startup_id),
+        "triggers": db.get_triggers_for_company(startup_id),
     }
 
 

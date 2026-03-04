@@ -143,5 +143,12 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
                 recalculate_all_priorities()
             except Exception as e:
                 print(f"  ⚠️  Engagement tier recalculation failed: {e}")
+
+            # Run trigger detection on Tier 1+2 companies
+            try:
+                from app.triggers.trigger_detector import run_trigger_detection
+                run_trigger_detection()
+            except Exception as e:
+                print(f"  ⚠️  Trigger detection failed: {e}")
     finally:
         _active_run.clear()

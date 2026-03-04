@@ -7,6 +7,7 @@ import { ConfidenceBar } from "@/components/ConfidenceBar";
 import { EntrenchmentChip } from "@/components/EntrenchmentChip";
 import { PropensityChip } from "@/components/PropensityChip";
 import { EngagementTierChip } from "@/components/EngagementTierChip";
+import { TriggerBadge } from "@/components/TriggerBadge";
 import { Tooltip } from "@/components/Tooltip";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -146,6 +147,7 @@ export default function CompaniesPage() {
               <TableHead><Tooltip text="Sub-vertical within the industry vertical" position="below">Sub-Vertical</Tooltip></TableHead>
               <TableHead><Tooltip text="Structural likelihood of becoming a significant cloud customer" position="below">Propensity</Tooltip></TableHead>
               <TableHead><Tooltip text="Engagement priority based on funding recency, propensity, and entrenchment" position="below">Tier</Tooltip></TableHead>
+              <TableHead><Tooltip text="Active inflection-point triggers detected" position="below">Triggers</Tooltip></TableHead>
               <TableHead>
                 <button onClick={cycleFundingSort} className="flex items-center gap-1 hover:text-gray-900 transition-colors group">
                   <Tooltip text="Largest known funding round" position="below">Funding</Tooltip>
@@ -161,7 +163,7 @@ export default function CompaniesPage() {
           <TableBody>
             {loading
               ? Array.from({ length: 8 }).map((_, i) => (
-                  <TableRow key={i}>{Array.from({ length: 14 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
+                  <TableRow key={i}>{Array.from({ length: 15 }).map((_, j) => <TableCell key={j}><Skeleton className="h-4 w-full" /></TableCell>)}</TableRow>
                 ))
               : sortedRows.map((r) => (
                   <TableRow key={r.id} className="hover:bg-gray-50">
@@ -184,6 +186,7 @@ export default function CompaniesPage() {
                     <TableCell className="text-gray-500 text-xs max-w-[180px] whitespace-normal">{r.sub_vertical ?? "—"}</TableCell>
                     <TableCell><PropensityChip propensity={r.cloud_propensity} /></TableCell>
                     <TableCell><EngagementTierChip tier={r.engagement_tier} rationale={r.engagement_tier_rationale} /></TableCell>
+                    <TableCell><TriggerBadge count={r.active_trigger_count} /></TableCell>
                     <TableCell className="text-gray-500 text-sm">
                       {r.funding_amount_usd != null ? `$${r.funding_amount_usd}M` : "—"}
                     </TableCell>
