@@ -90,6 +90,12 @@ export interface StartupRow {
   // Funding (only present for pipeline-discovered companies)
   funding_amount_usd?: number;
   funding_announcement_date?: string;
+  // Classification
+  vertical?: string;
+  sub_vertical?: string;
+  cloud_propensity?: "High" | "Medium" | "Low";
+  classification_confidence?: "high" | "medium" | "low";
+  classification_source?: string;
 }
 
 export interface Signal {
@@ -124,10 +130,16 @@ export interface ProviderDistribution {
   avg_confidence: number;
 }
 
+export interface VerticalDistribution {
+  vertical: string;
+  count: number;
+}
+
 export interface Summary {
   total_companies: number;
   cloud_distribution: ProviderDistribution[];
   ai_distribution: ProviderDistribution[];
+  vertical_distribution?: VerticalDistribution[];
   latest_run?: PipelineRun;
 }
 
@@ -141,6 +153,8 @@ export const getStartups = (params?: {
   search?: string;
   date_from?: string;
   date_to?: string;
+  vertical?: string;
+  cloud_propensity?: string;
   page?: number;
   per_page?: number;
 }) => {
@@ -150,6 +164,8 @@ export const getStartups = (params?: {
   if (params?.search) qs.set("search", params.search);
   if (params?.date_from) qs.set("date_from", params.date_from);
   if (params?.date_to) qs.set("date_to", params.date_to);
+  if (params?.vertical) qs.set("vertical", params.vertical);
+  if (params?.cloud_propensity) qs.set("cloud_propensity", params.cloud_propensity);
   if (params?.page) qs.set("page", String(params.page));
   if (params?.per_page) qs.set("per_page", String(params.per_page));
   const query = qs.toString() ? `?${qs}` : "";

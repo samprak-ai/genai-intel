@@ -17,11 +17,13 @@ export default async function DashboardPage() {
     // API unreachable — render with empty state rather than crashing
   }
 
-  const cloudDist = summary.cloud_distribution ?? [];
-  const aiDist    = summary.ai_distribution ?? [];
-  const topCloud  = cloudDist.find(r => r.provider !== "Unknown");
-  const topAI     = aiDist.find(r => r.provider !== "Unknown");
-  const total     = summary.total_companies || cloudDist.reduce((s, r) => s + r.startup_count, 0);
+  const cloudDist    = summary.cloud_distribution ?? [];
+  const aiDist       = summary.ai_distribution ?? [];
+  const verticalDist = summary.vertical_distribution ?? [];
+  const topCloud     = cloudDist.find(r => r.provider !== "Unknown");
+  const topAI        = aiDist.find(r => r.provider !== "Unknown");
+  const topVertical  = verticalDist[0];
+  const total        = summary.total_companies || cloudDist.reduce((s, r) => s + r.startup_count, 0);
 
   return (
     <div className="space-y-8">
@@ -30,10 +32,11 @@ export default async function DashboardPage() {
         <p className="text-sm text-gray-500 mt-1">Cloud and AI provider attribution for AI startups</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <KpiCard label="Companies Tracked" value={String(total)} />
         <KpiCard label="Top Cloud" value={topCloud?.provider ?? "—"} sub={topCloud ? `${topCloud.startup_count} startups` : ""} />
         <KpiCard label="Top AI" value={topAI?.provider ?? "—"} sub={topAI ? `${topAI.startup_count} startups` : ""} />
+        <KpiCard label="Top Vertical" value={topVertical?.vertical ?? "—"} sub={topVertical ? `${topVertical.count} startups` : ""} />
         <KpiCard label="Last Run" value={summary.latest_run?.status ?? "Never"} sub={summary.latest_run?.run_date ?? ""} />
       </div>
 
@@ -100,7 +103,7 @@ function KpiCard({ label, value, sub }: { label: string; value: string; sub?: st
     <Card>
       <CardContent className="pt-5 pb-4">
         <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">{label}</p>
-        <p className="text-2xl font-bold">{value}</p>
+        <p className="text-2xl font-bold truncate" title={value}>{value}</p>
         {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
       </CardContent>
     </Card>

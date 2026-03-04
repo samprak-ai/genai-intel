@@ -84,12 +84,15 @@ class DatabaseClient:
         search: Optional[str] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
+        vertical: Optional[str] = None,
+        cloud_propensity: Optional[str] = None,
         page: int = 1,
         per_page: int = 50,
     ) -> list[dict]:
         """
         Paginated company list from latest_attributions view.
-        Supports filter by cloud/AI provider, name search, and snapshot_date range.
+        Supports filter by cloud/AI provider, name search, snapshot_date range,
+        vertical classification, and cloud propensity.
         date_from / date_to are inclusive ISO date strings (YYYY-MM-DD).
         Also merges in max funding_amount_usd and announcement_date from funding_events.
         """
@@ -105,6 +108,10 @@ class DatabaseClient:
             query = query.gte('snapshot_date', date_from)
         if date_to:
             query = query.lte('snapshot_date', date_to)
+        if vertical:
+            query = query.eq('vertical', vertical)
+        if cloud_propensity:
+            query = query.eq('cloud_propensity', cloud_propensity)
 
         offset = (page - 1) * per_page
         result = query \
@@ -426,6 +433,25 @@ class DatabaseClient:
     # ========================================================================
     # ANALYTICS (read from views)
     # ========================================================================
+
+    def get_vertical_distribution(self) -> list[dict]:
+        """Vertical distribution — count of companies per vertical from latest_attributions"""
+        result = self.client.table('latest_attributions') \
+            .select('vertical') \
+            .not_.is_('vertical', 'null') \
+            .execute()
+        if not result.data:
+            return []
+        counts: dict[str, int] = {}
+        for row in result.data:
+            v = row.get('vertical')
+            if v:
+                counts[v] = counts.get(v, 0) + 1
+        return sorted(
+            [{'vertical': k, 'count': v} for k, v in counts.items()],
+            key=lambda x: x['count'],
+            reverse=True,
+        )
 
     def get_cloud_distribution(self) -> list[dict]:
         """Cloud provider distribution from view"""

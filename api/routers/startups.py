@@ -51,6 +51,8 @@ def list_startups(
     search: Optional[str] = Query(None, description="Fuzzy search on company name"),
     date_from: Optional[str] = Query(None, description="Filter snapshot_date >= this date (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="Filter snapshot_date <= this date (YYYY-MM-DD)"),
+    vertical: Optional[str] = Query(None, description="Filter by vertical classification"),
+    cloud_propensity: Optional[str] = Query(None, description="Filter by cloud propensity: High / Medium / Low"),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
     db: DatabaseClient = Depends(get_db),
@@ -62,6 +64,8 @@ def list_startups(
         search=search,
         date_from=date_from,
         date_to=date_to,
+        vertical=vertical,
+        cloud_propensity=cloud_propensity,
         page=page,
         per_page=per_page,
     )

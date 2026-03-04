@@ -58,10 +58,12 @@ def summary(db: DatabaseClient = Depends(get_db)):
     - Total companies tracked
     - Cloud provider counts
     - AI provider counts
+    - Vertical distribution
     - Last pipeline run date + status
     """
     cloud_dist = db.get_cloud_distribution()
     ai_dist    = db.get_ai_distribution()
+    vertical_dist = db.get_vertical_distribution()
     latest_run = db.get_latest_run()
 
     # Count startups visible in the dashboard (respects $10M funding filter via view)
@@ -72,5 +74,6 @@ def summary(db: DatabaseClient = Depends(get_db)):
         "total_companies": total,
         "cloud_distribution": cloud_dist,
         "ai_distribution": ai_dist,
+        "vertical_distribution": vertical_dist,
         "latest_run": latest_run,
     }
