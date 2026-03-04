@@ -3,10 +3,13 @@
  * VerticalChart — pie chart for vertical classification distribution.
  * Shows how tracked companies are distributed across industry verticals.
  * Groups smaller slices into "Other" to keep the chart readable.
+ *
+ * Uses identical layout params as DistributionChart (height, cy, outerRadius,
+ * Legend inside ResponsiveContainer) so pie sizes and positions match exactly.
  */
 
 import {
-  PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer,
 } from "recharts";
 import type { PieLabelRenderProps } from "recharts";
 import { VerticalDistribution } from "@/lib/api";
@@ -56,7 +59,7 @@ const SHORT_LABELS: Record<string, string> = {
 const MAX_SLICES = 7;
 
 interface ChartEntry {
-  name: string;       // short label
+  name: string;       // short label (used by Legend nameKey)
   fullName: string;   // full vertical name (for tooltip)
   count: number;
 }
@@ -124,53 +127,38 @@ export function VerticalChart({ data }: Props) {
   const total = chartData.reduce((s, r) => s + r.count, 0);
 
   return (
-    <div>
-      <ResponsiveContainer width="100%" height={200}>
-        <PieChart>
-          <Pie
-            data={chartData}
-            dataKey="count"
-            nameKey="name"
-            cx="50%"
-            cy="50%"
-            outerRadius={80}
-            paddingAngle={2}
-            label={renderLabel}
-            labelLine={false}
-          >
-            {chartData.map((entry) => (
-              <Cell
-                key={entry.name}
-                fill={VERTICAL_PALETTE[entry.fullName] ?? VERTICAL_PALETTE[entry.name] ?? "#9CA3AF"}
-              />
-            ))}
-          </Pie>
-          <Tooltip
-            formatter={(v: number | string | undefined, name: string | undefined) => {
-              const n   = Number(v ?? 0);
-              const pct = total > 0 ? ((n / total) * 100).toFixed(1) : "0";
-              // Find full name for tooltip
-              const entry = chartData.find((e) => e.name === name);
-              const label = entry && entry.name !== entry.fullName ? entry.fullName : name;
-              return [`${n} startups (${pct}%)`, label ?? ""];
-            }}
-            contentStyle={{ fontSize: 12 }}
-          />
-        </PieChart>
-      </ResponsiveContainer>
-
-      {/* Custom compact legend */}
-      <div className="flex flex-wrap justify-center gap-x-3 gap-y-1 px-2 -mt-2">
-        {chartData.map((entry) => (
-          <div key={entry.name} className="flex items-center gap-1" title={entry.fullName}>
-            <span
-              className="inline-block w-2 h-2 rounded-full flex-shrink-0"
-              style={{ backgroundColor: VERTICAL_PALETTE[entry.fullName] ?? VERTICAL_PALETTE[entry.name] ?? "#9CA3AF" }}
+    <ResponsiveContainer width="100%" height={240}>
+      <PieChart>
+        <Pie
+          data={chartData}
+          dataKey="count"
+          nameKey="name"
+          cx="50%"
+          cy="46%"
+          outerRadius={90}
+          paddingAngle={2}
+          label={renderLabel}
+          labelLine={false}
+        >
+          {chartData.map((entry) => (
+            <Cell
+              key={entry.name}
+              fill={VERTICAL_PALETTE[entry.fullName] ?? VERTICAL_PALETTE[entry.name] ?? "#9CA3AF"}
             />
-            <span className="text-[11px] text-gray-600">{entry.name}</span>
-          </div>
-        ))}
-      </div>
-    </div>
+          ))}
+        </Pie>
+        <Tooltip
+          formatter={(v: number | string | undefined, name: string | undefined) => {
+            const n   = Number(v ?? 0);
+            const pct = total > 0 ? ((n / total) * 100).toFixed(1) : "0";
+            const entry = chartData.find((e) => e.name === name);
+            const label = entry && entry.name !== entry.fullName ? entry.fullName : name;
+            return [`${n} startups (${pct}%)`, label ?? ""];
+          }}
+          contentStyle={{ fontSize: 12 }}
+        />
+        <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+      </PieChart>
+    </ResponsiveContainer>
   );
 }
