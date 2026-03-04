@@ -36,7 +36,7 @@ export default async function DashboardPage() {
         <KpiCard label="Companies Tracked" value={String(total)} />
         <KpiCard label="Top Cloud" value={topCloud?.provider ?? "—"} sub={topCloud ? `${topCloud.startup_count} startups` : ""} />
         <KpiCard label="Top AI" value={topAI?.provider ?? "—"} sub={topAI ? `${topAI.startup_count} startups` : ""} />
-        <KpiCard label="Top Vertical" value={topVertical?.vertical ?? "—"} sub={topVertical ? `${topVertical.count} startups` : ""} />
+        <KpiCard label="Top Vertical" value={topVertical?.vertical ?? "—"} sub={topVertical ? `${topVertical.count} startups` : ""} small />
         <KpiCard label="Last Run" value={summary.latest_run?.status ?? "Never"} sub={summary.latest_run?.run_date ?? ""} />
       </div>
 
@@ -98,12 +98,12 @@ export default async function DashboardPage() {
   );
 }
 
-function KpiCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function KpiCard({ label, value, sub, small }: { label: string; value: string; sub?: string; small?: boolean }) {
   return (
     <Card>
       <CardContent className="pt-5 pb-4">
         <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">{label}</p>
-        <p className="text-2xl font-bold truncate" title={value}>{value}</p>
+        <p className={`${small ? "text-base" : "text-2xl"} font-bold truncate`} title={value}>{value}</p>
         {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
       </CardContent>
     </Card>
