@@ -59,7 +59,7 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Verticals</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Primary Verticals Share</CardTitle></CardHeader>
           <CardContent>
             {verticalDist.length > 0
               ? <VerticalChart data={verticalDist} />

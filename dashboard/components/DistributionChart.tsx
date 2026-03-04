@@ -18,7 +18,7 @@ const CLOUD_PALETTE: Record<string, string> = {
   Hybrid:        "#14B8A6",  // teal   — cloud + on-premises mix
   "On-Premises": "#64748B",  // slate  — own infrastructure
   Other:         "#9CA3AF",  // gray   — neo/GPU clouds (CoreWeave, Lambda etc.)
-  Unknown:       "#D1D5DB",  // light gray
+  Unknown:       "#93C5FD",  // blue-300 — clearly distinct from gray Other
 };
 
 const AI_PALETTE: Record<string, string> = {
@@ -26,7 +26,7 @@ const AI_PALETTE: Record<string, string> = {
   OpenAI:           "#10B981",   // emerald
   "Multi-Provider": "#6366F1",   // indigo — mixed AI usage
   Other:            "#9CA3AF",   // gray
-  Unknown:          "#D1D5DB",
+  Unknown:          "#93C5FD",   // blue-300 — clearly distinct from gray Other
 };
 
 /** AI providers to keep as individual slices; everything else → "Other" */
