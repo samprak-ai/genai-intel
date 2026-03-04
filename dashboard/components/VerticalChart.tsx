@@ -125,7 +125,7 @@ export function VerticalChart({ data }: Props) {
 
   return (
     <div>
-      <ResponsiveContainer width="100%" height={220}>
+      <ResponsiveContainer width="100%" height={200}>
         <PieChart>
           <Pie
             data={chartData}
@@ -133,7 +133,7 @@ export function VerticalChart({ data }: Props) {
             nameKey="name"
             cx="50%"
             cy="50%"
-            outerRadius={85}
+            outerRadius={80}
             paddingAngle={2}
             label={renderLabel}
             labelLine={false}
