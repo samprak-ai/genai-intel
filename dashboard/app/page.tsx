@@ -103,7 +103,7 @@ function KpiCard({ label, value, sub, small }: { label: string; value: string; s
     <Card>
       <CardContent className="pt-5 pb-4">
         <p className="text-xs text-gray-500 uppercase tracking-wide mb-1">{label}</p>
-        <p className={`${small ? "text-base" : "text-2xl"} font-bold truncate`} title={value}>{value}</p>
+        <p className={`${small ? "text-sm leading-snug" : "text-2xl"} font-bold ${small ? "" : "truncate"}`} title={value}>{value}</p>
         {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
       </CardContent>
     </Card>
