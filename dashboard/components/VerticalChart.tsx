@@ -100,7 +100,6 @@ export function VerticalChart({ data }: Props) {
             cx="50%"
             cy="50%"
             outerRadius={85}
-            innerRadius={40}
             paddingAngle={2}
           >
             {chartData.map((entry) => (
