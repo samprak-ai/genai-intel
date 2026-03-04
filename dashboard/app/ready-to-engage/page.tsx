@@ -150,16 +150,20 @@ export default function ReadyToEngagePage() {
                             ) : (
                               <p className="text-sm text-gray-400 italic">No engagement angle generated yet.</p>
                             )}
-                            {r.key_signals && r.key_signals.length > 0 && (
-                              <div>
-                                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Key Signals</p>
-                                <ul className="text-sm space-y-0.5">
-                                  {r.key_signals.map((signal, i) => (
-                                    <li key={i} className="text-gray-600">• {signal}</li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
+                            {(() => {
+                              const raw = r.key_signals;
+                              const signals: string[] = Array.isArray(raw) ? raw : typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { return []; } })() : [];
+                              return signals.length > 0 ? (
+                                <div>
+                                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Key Signals</p>
+                                  <ul className="text-sm space-y-0.5">
+                                    {signals.map((signal, i) => (
+                                      <li key={i} className="text-gray-600">• {signal}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : null;
+                            })()}
                             {r.intelligence_generated_at && (
                               <p className="text-xs text-gray-400">
                                 Generated {new Date(r.intelligence_generated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}

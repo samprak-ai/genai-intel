@@ -126,29 +126,33 @@ export default function CompanyDetailPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Engagement Timing</p>
-                <EngagementTimingChip timing={snapshot.engagement_timing} />
+                <EngagementTimingChip timing={snapshot.engagement_timing as string} />
               </div>
               <div>
                 <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Engagement Tier</p>
-                <EngagementTierChip tier={snapshot.engagement_tier} rationale={snapshot.engagement_tier_rationale} />
+                <EngagementTierChip tier={snapshot.engagement_tier as number} rationale={snapshot.engagement_tier_rationale as string} />
               </div>
             </div>
             {snapshot.recommended_angle && (
               <div>
                 <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Recommended Angle</p>
-                <p className="text-sm leading-relaxed text-gray-700">{snapshot.recommended_angle}</p>
+                <p className="text-sm leading-relaxed text-gray-700">{snapshot.recommended_angle as string}</p>
               </div>
             )}
-            {snapshot.key_signals && (snapshot.key_signals as string[]).length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Key Signals</p>
-                <ul className="text-sm space-y-1">
-                  {(snapshot.key_signals as string[]).map((signal: string, i: number) => (
-                    <li key={i} className="text-gray-600">• {signal}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            {(() => {
+              const raw = snapshot.key_signals;
+              const signals: string[] = Array.isArray(raw) ? raw : typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { return []; } })() : [];
+              return signals.length > 0 ? (
+                <div>
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Key Signals</p>
+                  <ul className="text-sm space-y-1">
+                    {signals.map((signal: string, i: number) => (
+                      <li key={i} className="text-gray-600">• {signal}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null;
+            })()}
             {snapshot.intelligence_generated_at && (
               <p className="text-xs text-gray-400 pt-1">
                 Generated {new Date(snapshot.intelligence_generated_at as string).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
