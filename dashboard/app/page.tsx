@@ -43,7 +43,7 @@ export default async function DashboardPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">Cloud Providers</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Primary Cloud Provider Share</CardTitle></CardHeader>
           <CardContent>
             {cloudDist.length > 0
               ? <DistributionChart data={cloudDist} type="cloud" />
@@ -51,7 +51,7 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader className="pb-2"><CardTitle className="text-base">AI Providers</CardTitle></CardHeader>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Primary AI Provider Share</CardTitle></CardHeader>
           <CardContent>
             {aiDist.length > 0
               ? <DistributionChart data={aiDist} type="ai" />

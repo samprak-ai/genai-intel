@@ -8,6 +8,7 @@
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
 } from "recharts";
+import type { PieLabelRenderProps } from "recharts";
 import { VerticalDistribution } from "@/lib/api";
 
 const VERTICAL_PALETTE: Record<string, string> = {
@@ -64,6 +65,39 @@ interface Props {
   data: VerticalDistribution[];
 }
 
+/** Render "30%" labels inside each slice */
+function renderLabel({
+  cx, cy, midAngle, innerRadius, outerRadius, percent,
+}: PieLabelRenderProps) {
+  const RADIAN = Math.PI / 180;
+  const cxNum = Number(cx ?? 0);
+  const cyNum = Number(cy ?? 0);
+  const inner = Number(innerRadius ?? 0);
+  const outer = Number(outerRadius ?? 0);
+  const pct   = Number(percent ?? 0);
+
+  if (pct < 0.06) return null;
+
+  const angle  = -Number(midAngle ?? 0) * RADIAN;
+  const radius = (inner + outer) / 2;
+  const x      = cxNum + radius * Math.cos(angle);
+  const y      = cyNum + radius * Math.sin(angle);
+
+  return (
+    <text
+      x={x}
+      y={y}
+      textAnchor="middle"
+      dominantBaseline="central"
+      fontSize={11}
+      fontWeight={600}
+      fill="#fff"
+    >
+      {`${(pct * 100).toFixed(0)}%`}
+    </text>
+  );
+}
+
 /** Collapse smaller verticals into "Other" and shorten labels */
 function prepareData(raw: VerticalDistribution[]): ChartEntry[] {
   // Data arrives sorted by count desc from API
@@ -101,6 +135,8 @@ export function VerticalChart({ data }: Props) {
             cy="50%"
             outerRadius={85}
             paddingAngle={2}
+            label={renderLabel}
+            labelLine={false}
           >
             {chartData.map((entry) => (
               <Cell

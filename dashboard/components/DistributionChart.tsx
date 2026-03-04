@@ -1,7 +1,7 @@
 "use client";
 /**
- * DistributionChart — donut pie chart for cloud/AI provider distribution.
- * Shows count + percentage labels on each slice, with a rich tooltip.
+ * DistributionChart — pie chart for cloud/AI provider distribution.
+ * Shows percentage labels inside each slice, with a rich tooltip.
  */
 
 import {
@@ -22,44 +22,62 @@ const CLOUD_PALETTE: Record<string, string> = {
 };
 
 const AI_PALETTE: Record<string, string> = {
-  // Established providers
   Anthropic:        "#D97706",   // amber
   OpenAI:           "#10B981",   // emerald
-  "Google AI":      "#4285F4",   // Google blue
-  Cohere:           "#7C3AED",   // violet
-  Mistral:          "#F43F5E",   // rose
-  // Open-source / inference providers
-  "Meta / Llama":   "#38BDF8",   // sky
-  "xAI / Grok":     "#1F2937",   // dark gray
-  "Hugging Face":   "#FBBF24",   // yellow
-  "Together AI":    "#14B8A6",   // teal
-  Groq:             "#F97316",   // orange
-  Replicate:        "#A855F7",   // purple
-  // Meta slices
   "Multi-Provider": "#6366F1",   // indigo — mixed AI usage
+  Other:            "#9CA3AF",   // gray
   Unknown:          "#D1D5DB",
 };
+
+/** AI providers to keep as individual slices; everything else → "Other" */
+const AI_KEEP = new Set(["OpenAI", "Anthropic", "Multi-Provider", "Unknown"]);
 
 interface Props {
   data: ProviderDistribution[];
   type: "cloud" | "ai";
 }
 
-/** Render "25 (58%)" labels outside each slice */
+/** Group minor AI providers into "Other" */
+function prepareAIData(raw: ProviderDistribution[]): ProviderDistribution[] {
+  const kept: ProviderDistribution[] = [];
+  let otherCount = 0;
+
+  for (const entry of raw) {
+    if (AI_KEEP.has(entry.provider)) {
+      kept.push(entry);
+    } else {
+      otherCount += entry.startup_count;
+    }
+  }
+
+  if (otherCount > 0) {
+    kept.push({ provider: "Other", startup_count: otherCount, multi_cloud_count: 0, sole_provider_count: 0, avg_confidence: 0 });
+  }
+
+  // Sort descending by count, Unknown last
+  return kept.sort((a, b) => {
+    if (a.provider === "Unknown") return 1;
+    if (b.provider === "Unknown") return -1;
+    return b.startup_count - a.startup_count;
+  });
+}
+
+/** Render "30%" labels inside each slice */
 function renderLabel({
-  cx, cy, midAngle, outerRadius, percent, value,
+  cx, cy, midAngle, innerRadius, outerRadius, percent,
 }: PieLabelRenderProps) {
   const RADIAN = Math.PI / 180;
   const cxNum = Number(cx ?? 0);
   const cyNum = Number(cy ?? 0);
-  const rNum  = Number(outerRadius ?? 0);
+  const inner = Number(innerRadius ?? 0);
+  const outer = Number(outerRadius ?? 0);
   const pct   = Number(percent ?? 0);
 
-  // Skip tiny slices to avoid label overlap
-  if (pct < 0.05) return null;
+  // Skip tiny slices
+  if (pct < 0.06) return null;
 
   const angle  = -Number(midAngle ?? 0) * RADIAN;
-  const radius = rNum + 22;
+  const radius = (inner + outer) / 2;
   const x      = cxNum + radius * Math.cos(angle);
   const y      = cyNum + radius * Math.sin(angle);
 
@@ -70,22 +88,24 @@ function renderLabel({
       textAnchor="middle"
       dominantBaseline="central"
       fontSize={11}
-      fill="#374151"
+      fontWeight={600}
+      fill="#fff"
     >
-      {`${value} (${(pct * 100).toFixed(0)}%)`}
+      {`${(pct * 100).toFixed(0)}%`}
     </text>
   );
 }
 
 export function DistributionChart({ data, type }: Props) {
-  const palette = type === "cloud" ? CLOUD_PALETTE : AI_PALETTE;
-  const total   = data.reduce((s, r) => s + r.startup_count, 0);
+  const palette   = type === "cloud" ? CLOUD_PALETTE : AI_PALETTE;
+  const chartData = type === "ai" ? prepareAIData(data) : data;
+  const total     = chartData.reduce((s, r) => s + r.startup_count, 0);
 
   return (
     <ResponsiveContainer width="100%" height={240}>
       <PieChart>
         <Pie
-          data={data}
+          data={chartData}
           dataKey="startup_count"
           nameKey="provider"
           cx="50%"
@@ -95,7 +115,7 @@ export function DistributionChart({ data, type }: Props) {
           label={renderLabel}
           labelLine={false}
         >
-          {data.map((entry) => (
+          {chartData.map((entry) => (
             <Cell
               key={entry.provider}
               fill={palette[entry.provider] ?? "#9CA3AF"}
