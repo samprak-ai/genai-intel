@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { ProviderBadge } from "@/components/ProviderBadge";
 import { ConfidenceBar } from "@/components/ConfidenceBar";
 import { EntrenchmentChip } from "@/components/EntrenchmentChip";
+import { EngagementTimingChip } from "@/components/EngagementTimingChip";
+import { EngagementTierChip } from "@/components/EngagementTierChip";
 import { Tooltip } from "@/components/Tooltip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -116,6 +118,45 @@ export default function CompanyDetailPage() {
         <AttributionCard title="☁️ Cloud" provider={snapshot?.cloud_primary_provider} isMulti={snapshot?.cloud_is_multi} providers={snapshot?.cloud_providers} isNA={snapshot?.cloud_not_applicable} naNote={snapshot?.cloud_not_applicable_note} confidence={snapshot?.cloud_confidence} entrenchment={snapshot?.cloud_entrenchment} evidenceCount={snapshot?.cloud_evidence_count} type="cloud" signals={cloudSignals} />
         <AttributionCard title="🤖 AI Provider" provider={snapshot?.ai_primary_provider} isMulti={snapshot?.ai_is_multi} providers={snapshot?.ai_providers} isNA={snapshot?.ai_not_applicable} naNote={snapshot?.ai_not_applicable_note} confidence={snapshot?.ai_confidence} entrenchment={snapshot?.ai_entrenchment} evidenceCount={snapshot?.ai_evidence_count} type="ai" signals={aiSignals} />
       </div>
+
+      {snapshot?.engagement_timing && (
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">📊 Engagement Intelligence</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Engagement Timing</p>
+                <EngagementTimingChip timing={snapshot.engagement_timing} />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-1">Engagement Tier</p>
+                <EngagementTierChip tier={snapshot.engagement_tier} rationale={snapshot.engagement_tier_rationale} />
+              </div>
+            </div>
+            {snapshot.recommended_angle && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Recommended Angle</p>
+                <p className="text-sm leading-relaxed text-gray-700">{snapshot.recommended_angle}</p>
+              </div>
+            )}
+            {snapshot.key_signals && (snapshot.key_signals as string[]).length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Key Signals</p>
+                <ul className="text-sm space-y-1">
+                  {(snapshot.key_signals as string[]).map((signal: string, i: number) => (
+                    <li key={i} className="text-gray-600">• {signal}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {snapshot.intelligence_generated_at && (
+              <p className="text-xs text-gray-400 pt-1">
+                Generated {new Date(snapshot.intelligence_generated_at as string).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-3"><CardTitle className="text-base">Manual Enrichment</CardTitle></CardHeader>

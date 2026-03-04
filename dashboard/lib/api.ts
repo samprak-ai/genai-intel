@@ -102,6 +102,11 @@ export interface StartupRow {
   engagement_tier_rationale?: string;
   // Triggers
   active_trigger_count?: number;
+  // Outreach intelligence
+  engagement_timing?: "Hot" | "Warm" | "Watch";
+  recommended_angle?: string;
+  key_signals?: string[];
+  intelligence_generated_at?: string;
 }
 
 export interface Trigger {
@@ -158,6 +163,8 @@ export interface Summary {
   ai_distribution: ProviderDistribution[];
   vertical_distribution?: VerticalDistribution[];
   latest_run?: PipelineRun;
+  tier_1_count?: number;
+  active_trigger_count?: number;
 }
 
 // ---------------------------------------------------------------------------

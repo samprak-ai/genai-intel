@@ -150,5 +150,12 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
                 run_trigger_detection()
             except Exception as e:
                 print(f"  ⚠️  Trigger detection failed: {e}")
+
+            # Generate/refresh outreach intelligence for Tier 1+2 companies
+            try:
+                from app.intelligence.outreach_generator import run_outreach_generation
+                run_outreach_generation()
+            except Exception as e:
+                print(f"  ⚠️  Outreach intelligence generation failed: {e}")
     finally:
         _active_run.clear()

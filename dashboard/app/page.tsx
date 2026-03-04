@@ -41,6 +41,11 @@ export default async function DashboardPage() {
         <KpiCard label="Last Run" value={summary.latest_run?.status ?? "Never"} sub={summary.latest_run?.run_date ?? ""} />
       </div>
 
+      <div className="grid grid-cols-2 gap-4">
+        <KpiCard label="Tier 1 — Engage Now" value={String(summary.tier_1_count ?? 0)} sub="active outreach window" />
+        <KpiCard label="Active Triggers" value={String(summary.active_trigger_count ?? 0)} sub="across all companies" />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Primary Cloud Provider Share</CardTitle></CardHeader>

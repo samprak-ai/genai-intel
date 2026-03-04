@@ -70,10 +70,24 @@ def summary(db: DatabaseClient = Depends(get_db)):
     total_result = db.client.table('latest_attributions').select('id', count='exact').execute()
     total = total_result.count or 0
 
+    # Tier 1 count for Engage Now KPI card
+    tier_1_result = db.client.table('latest_attributions').select(
+        'id', count='exact'
+    ).eq('engagement_tier', 1).execute()
+    tier_1_count = tier_1_result.count or 0
+
+    # Active trigger count across all companies
+    trigger_result = db.client.table('company_triggers').select(
+        'id', count='exact'
+    ).execute()
+    active_trigger_count = trigger_result.count or 0
+
     return {
         "total_companies": total,
         "cloud_distribution": cloud_dist,
         "ai_distribution": ai_dist,
         "vertical_distribution": vertical_dist,
         "latest_run": latest_run,
+        "tier_1_count": tier_1_count,
+        "active_trigger_count": active_trigger_count,
     }
