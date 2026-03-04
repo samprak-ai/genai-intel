@@ -23,6 +23,7 @@ from app.models import FundingEvent, Startup, WeeklyRun
 from app.discovery.funding_discovery import FundingDiscovery
 from app.resolution.domain_resolver import DomainResolver
 from app.attribution.attribution_engine import AttributionEngine
+from app.classification.classifier import classify_company
 
 load_dotenv(override=True)  # override=True so .env wins over empty shell vars
 
@@ -426,8 +427,23 @@ class Pipeline:
                     for signal in ai_attr.signals:
                         self.db.create_signal(startup_id, signal)
 
+                # Classify into vertical taxonomy
+                classification = None
+                try:
+                    classification = classify_company(
+                        company_name=event.company_name,
+                        domain=event.website or "",
+                        description=event.description or "",
+                        investors=event.lead_investors if event.lead_investors else None,
+                        founder_background=", ".join(event.founder_background) if event.founder_background else None,
+                    )
+                    if classification and classification.vertical:
+                        print(f"    📊 Classified: {classification.vertical} / {classification.sub_vertical} (propensity={classification.cloud_propensity})")
+                except Exception as e:
+                    self._log_error(f"classify:{event.company_name}", str(e))
+
                 # Save attribution snapshot
-                snapshot_data = self._build_snapshot(startup_id, cloud_attr, ai_attr)
+                snapshot_data = self._build_snapshot(startup_id, cloud_attr, ai_attr, classification)
                 self.db.create_snapshot(snapshot_data)
 
                 saved += 1
@@ -483,8 +499,23 @@ class Pipeline:
                     for signal in ai_attr.signals:
                         self.db.create_signal(startup_id, signal)
 
+                # Classify into vertical taxonomy
+                classification = None
+                try:
+                    classification = classify_company(
+                        company_name=event.company_name,
+                        domain=event.website or "",
+                        description=event.description or "",
+                        investors=event.lead_investors if event.lead_investors else None,
+                        founder_background=", ".join(event.founder_background) if event.founder_background else None,
+                    )
+                    if classification and classification.vertical:
+                        print(f"    📊 Classified: {classification.vertical} / {classification.sub_vertical} (propensity={classification.cloud_propensity})")
+                except Exception as e:
+                    self._log_error(f"classify:{event.company_name}", str(e))
+
                 # Save attribution snapshot
-                snapshot_data = self._build_snapshot(startup_id, cloud_attr, ai_attr)
+                snapshot_data = self._build_snapshot(startup_id, cloud_attr, ai_attr, classification)
                 self.db.create_snapshot(snapshot_data)
 
                 saved += 1
@@ -500,7 +531,8 @@ class Pipeline:
         self,
         startup_id: str,
         cloud_attr,
-        ai_attr
+        ai_attr,
+        classification=None,
     ) -> dict:
         """Build the snapshot dict for database storage — matches attribution_snapshots schema exactly"""
         snapshot = {
@@ -528,6 +560,13 @@ class Pipeline:
             "ai_raw_score":        ai_attr.providers[0].raw_score if (ai_attr and ai_attr.providers) else None,
             "ai_not_applicable":   ai_attr.is_not_applicable if ai_attr else False,
             "ai_not_applicable_note": ai_attr.not_applicable_note if ai_attr else None,
+
+            # Classification fields
+            "vertical":                   classification.vertical if classification else None,
+            "sub_vertical":               classification.sub_vertical if classification else None,
+            "cloud_propensity":           classification.cloud_propensity if classification else None,
+            "classification_confidence":  classification.classification_confidence if classification else None,
+            "classification_source":      classification.classification_source if classification else None,
         }
         return snapshot
 

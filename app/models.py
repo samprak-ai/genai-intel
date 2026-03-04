@@ -31,6 +31,20 @@ class EntrenchmentLevel(str, Enum):
     UNKNOWN = "UNKNOWN"    # Score < 0.3 (no evidence)
 
 
+class CloudPropensity(str, Enum):
+    """Structural likelihood of becoming a significant cloud customer"""
+    HIGH = "High"
+    MEDIUM = "Medium"
+    LOW = "Low"
+
+
+class ClassificationConfidence(str, Enum):
+    """LLM's self-reported confidence in the classification"""
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 # ============================================================================
 # FUNDING DISCOVERY MODELS
 # ============================================================================
