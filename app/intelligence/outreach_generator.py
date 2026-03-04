@@ -34,7 +34,7 @@ class OutreachIntelligence:
 # Constants
 # ---------------------------------------------------------------------------
 
-MODEL = "claude-3-5-haiku-latest"
+MODEL = "claude-3-haiku-20240307"
 
 OUTREACH_PROMPT = """You are generating a concise engagement intelligence briefing for a cloud provider GTM team.
 
