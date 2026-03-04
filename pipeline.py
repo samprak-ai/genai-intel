@@ -436,6 +436,7 @@ class Pipeline:
                         description=event.description or "",
                         investors=event.lead_investors if event.lead_investors else None,
                         founder_background=", ".join(event.founder_background) if event.founder_background else None,
+                        article_text=event.raw_article_text,
                     )
                     if classification and classification.vertical:
                         print(f"    📊 Classified: {classification.vertical} / {classification.sub_vertical} (propensity={classification.cloud_propensity})")
@@ -508,6 +509,7 @@ class Pipeline:
                         description=event.description or "",
                         investors=event.lead_investors if event.lead_investors else None,
                         founder_background=", ".join(event.founder_background) if event.founder_background else None,
+                        article_text=event.raw_article_text,
                     )
                     if classification and classification.vertical:
                         print(f"    📊 Classified: {classification.vertical} / {classification.sub_vertical} (propensity={classification.cloud_propensity})")

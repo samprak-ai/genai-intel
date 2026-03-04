@@ -1,5 +1,6 @@
 import { getSummary, getRecentFunding, Summary } from "@/lib/api";
 import { DistributionChart } from "@/components/DistributionChart";
+import { VerticalChart } from "@/components/VerticalChart";
 import { ProviderBadge } from "@/components/ProviderBadge";
 import { ConfidenceBar } from "@/components/ConfidenceBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -40,7 +41,7 @@ export default async function DashboardPage() {
         <KpiCard label="Last Run" value={summary.latest_run?.status ?? "Never"} sub={summary.latest_run?.run_date ?? ""} />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         <Card>
           <CardHeader className="pb-2"><CardTitle className="text-base">Cloud Providers</CardTitle></CardHeader>
           <CardContent>
@@ -54,6 +55,14 @@ export default async function DashboardPage() {
           <CardContent>
             {aiDist.length > 0
               ? <DistributionChart data={aiDist} type="ai" />
+              : <p className="text-sm text-gray-400 py-8 text-center">No data yet</p>}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2"><CardTitle className="text-base">Verticals</CardTitle></CardHeader>
+          <CardContent>
+            {verticalDist.length > 0
+              ? <VerticalChart data={verticalDist} />
               : <p className="text-sm text-gray-400 py-8 text-center">No data yet</p>}
           </CardContent>
         </Card>

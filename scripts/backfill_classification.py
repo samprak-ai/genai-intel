@@ -72,6 +72,19 @@ def backfill(limit: int = 0, dry_run: bool = False):
         for row in res.data:
             startups_data[row['id']] = row
 
+    # Fetch raw article text from funding_events for richer classification context
+    article_text_map = {}  # startup_id -> raw_article_text
+    for i in range(0, len(startup_ids), 50):
+        chunk = startup_ids[i:i+50]
+        res = sb.table('funding_events').select(
+            'startup_id, raw_article_text'
+        ).in_('startup_id', chunk).not_.is_('raw_article_text', 'null').execute()
+        for row in res.data:
+            # Keep the longest article text per startup (most informative)
+            existing = article_text_map.get(row['startup_id'], '')
+            if len(row.get('raw_article_text', '') or '') > len(existing):
+                article_text_map[row['startup_id']] = row['raw_article_text']
+
     classified = 0
     failed = 0
 
@@ -104,6 +117,8 @@ def backfill(limit: int = 0, dry_run: bool = False):
         elif not isinstance(founder_bg, str):
             founder_bg = None
 
+        article_text = article_text_map.get(snap['startup_id'])
+
         try:
             result = classify_company(
                 company_name=name,
@@ -111,6 +126,7 @@ def backfill(limit: int = 0, dry_run: bool = False):
                 description=desc,
                 investors=investors,
                 founder_background=founder_bg,
+                article_text=article_text,
             )
 
             prop = result.cloud_propensity or 'None'

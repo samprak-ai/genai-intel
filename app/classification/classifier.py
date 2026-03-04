@@ -56,7 +56,7 @@ Domain: {domain}
 Description: {description}
 Investors: {investors}
 Founder background: {founder_background}
-
+{article_context}
 Choose the single best-fit vertical and sub-vertical from this taxonomy:
 
 {taxonomy_list}
@@ -81,6 +81,7 @@ def classify_company(
     description: str = "",
     investors: Optional[list[str]] = None,
     founder_background: Optional[str] = None,
+    article_text: Optional[str] = None,
 ) -> ClassificationResult:
     """
     Classify a company into the vertical taxonomy using Claude Haiku.
@@ -104,12 +105,19 @@ def classify_company(
         )
 
     # Build prompt
+    article_context = ""
+    if article_text:
+        # Truncate to 1500 chars to keep prompt cost low while providing rich context
+        trimmed = article_text[:1500]
+        article_context = f"Funding article excerpt: {trimmed}\n"
+
     prompt = CLASSIFICATION_PROMPT.format(
         company_name=company_name,
         domain=domain or "unknown",
         description=description or "No description available",
         investors=", ".join(investors) if investors else "Unknown",
         founder_background=founder_background or "Unknown",
+        article_context=article_context,
         taxonomy_list=_TAXONOMY_PROMPT_LIST,
     )
 
