@@ -9,7 +9,7 @@ Signals detected:
   - press_feature:     >=3 mentions in major tech press in last 14 days
 
 Runs daily after recalculate_all_priorities(), only on Tier 1+2 companies.
-Cost: ~5 Brave calls/company × ~50 Tier 1+2 companies = ~250 Brave calls/day.
+Cost: ~5 Serper calls/company × ~50 Tier 1+2 companies = ~250 Serper calls/day.
 """
 
 import os
@@ -38,7 +38,6 @@ class DetectedTrigger:
 # Constants
 # ---------------------------------------------------------------------------
 
-BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search'
 TIMEOUT = 6
 HIRING_SURGE_THRESHOLD = 3
 
@@ -77,47 +76,7 @@ _CLOUD_ADJACENT_VENDORS = [
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _brave_search(query: str, count: int = 10) -> list[dict]:
-    """Execute a Brave web search. Returns list of result dicts."""
-    brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
-    if not brave_key:
-        return []
-    try:
-        resp = requests.get(
-            BRAVE_SEARCH_URL,
-            params={'q': query, 'count': count, 'text_decorations': False},
-            headers={
-                'Accept': 'application/json',
-                'Accept-Encoding': 'gzip',
-                'X-Subscription-Token': brave_key,
-            },
-            timeout=TIMEOUT,
-        )
-        if resp.status_code == 200:
-            return resp.json().get('web', {}).get('results', [])
-    except Exception:
-        pass
-    return []
-
-
-def _parse_brave_age(age_str: str) -> int:
-    """Parse Brave 'age' string into approximate days. Returns 999 if unparseable."""
-    if not age_str:
-        return 999
-    lower = age_str.lower()
-    num_match = re.search(r'(\d+)', lower)
-    num = int(num_match.group(1)) if num_match else 1
-    if 'hour' in lower:
-        return 0
-    elif 'day' in lower:
-        return num
-    elif 'week' in lower:
-        return num * 7
-    elif 'month' in lower:
-        return num * 30
-    elif 'year' in lower:
-        return num * 365
-    return 999
+from app.core.search import serper_search, parse_result_age
 
 
 def _confirm_hire_with_haiku(company_name: str, title: str, snippet: str) -> Optional[bool]:
@@ -189,15 +148,15 @@ def _detect_leadership_hire(company_name: str) -> Optional[DetectedTrigger]:
     action_terms = 'hired OR joins OR appointed OR names OR announces'
     query = f'"{company_name}" ({title_terms}) ({action_terms})'
 
-    results = _brave_search(query, count=5)
+    results = serper_search(query, num=5)
     for r in results:
-        age_days = _parse_brave_age(r.get('age', ''))
+        age_days = parse_result_age(r.get('date', ''))
         if age_days > 60:
             continue  # only care about recent hires
 
         title = r.get('title', '').lower()
-        description = r.get('description', '').lower()
-        combined = f'{title} {description}'
+        snippet = r.get('snippet', '').lower()
+        combined = f'{title} {snippet}'
 
         # Check if any leadership title appears
         matched_title = None
@@ -211,7 +170,7 @@ def _detect_leadership_hire(company_name: str) -> Optional[DetectedTrigger]:
 
         # Haiku confirmation to filter out job postings vs actual hires (fail-open)
         is_confirmed = _confirm_hire_with_haiku(
-            company_name, r.get('title', ''), r.get('description', '')
+            company_name, r.get('title', ''), r.get('snippet', '')
         )
         if is_confirmed is False:
             continue  # Haiku says it's a job posting, not an actual hire
@@ -237,9 +196,9 @@ def _detect_product_launch(company_name: str, domain: str) -> Optional[DetectedT
         f'site:{clean_domain} OR site:techcrunch.com OR site:venturebeat.com OR site:theverge.com'
     )
 
-    results = _brave_search(query, count=5)
+    results = serper_search(query, num=5)
     for r in results:
-        age_days = _parse_brave_age(r.get('age', ''))
+        age_days = parse_result_age(r.get('date', ''))
         if age_days > 30:
             continue
 
@@ -266,9 +225,9 @@ def _detect_partnership(company_name: str) -> Optional[DetectedTrigger]:
         vendor_terms = ' OR '.join(f'"{v}"' for v in batch)
         query = f'"{company_name}" ({vendor_terms}) (partnership OR integration OR announces)'
 
-        results = _brave_search(query, count=5)
+        results = serper_search(query, num=5)
         for r in results:
-            age_days = _parse_brave_age(r.get('age', ''))
+            age_days = parse_result_age(r.get('date', ''))
             if age_days > 60:
                 continue
 
@@ -290,11 +249,11 @@ def _detect_partnership(company_name: str) -> Optional[DetectedTrigger]:
 def _detect_press_feature(company_name: str) -> Optional[DetectedTrigger]:
     """Detect >=3 mentions in major tech press in last 14 days."""
     query = f'"{company_name}"'
-    results = _brave_search(query, count=20)
+    results = serper_search(query, num=20)
 
     recent_authority_urls = []
     for r in results:
-        age_days = _parse_brave_age(r.get('age', ''))
+        age_days = parse_result_age(r.get('date', ''))
         if age_days > 14:
             continue
 

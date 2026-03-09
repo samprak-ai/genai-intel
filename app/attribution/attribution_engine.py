@@ -64,6 +64,7 @@ from app.models import (
     INVESTOR_CLOUD_PRIORS, FOUNDER_CLOUD_PRIORS, HARDWARE_INDUSTRIES,
 )
 from app.attribution.subprocessors_parser import SubprocessorsParser
+from app.core.search import serper_search, parse_age_to_strength
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -1713,84 +1714,59 @@ class AttributionEngine:
         # (they publish customer case studies; AI providers don't).         #
         # ------------------------------------------------------------------ #
 
-        brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
+        _STRENGTH_MAP = {'strong': SignalStrength.STRONG, 'medium': SignalStrength.MEDIUM, 'weak': SignalStrength.WEAK}
 
-        if brave_key:
-            company_q = f'"{company_name}"'
-            if domain_stem and domain_stem not in company_lower:
-                company_q = f'{company_q} OR {domain_stem}'
-            action_kw = 'partnership OR announces OR integrates OR "built on" OR "powered by" OR deal OR raises'
+        company_q = f'"{company_name}"'
+        if domain_stem and domain_stem not in company_lower:
+            company_q = f'{company_q} OR {domain_stem}'
+        action_kw = 'partnership OR announces OR integrates OR "built on" OR "powered by" OR deal OR raises'
 
-            # Provider terms grouped into 3 batches — all piped into one query each
-            _brave_batches = [
-                # Batch A: Hyperscalers
-                ('cloud_hyper', ProviderType.CLOUD,
-                 '"Amazon Web Services" OR AWS OR "Google Cloud" OR "Microsoft Azure" OR Azure'),
-                # Batch B: Neo/GPU clouds
-                ('cloud_neo', ProviderType.CLOUD,
-                 'CoreWeave OR "Lambda Labs" OR Crusoe OR OVHcloud OR Vultr OR Paperspace OR Nebius OR "Oracle Cloud"'),
-                # Batch C: AI providers
-                ('ai', ProviderType.AI,
-                 'OpenAI OR Anthropic OR "Vertex AI" OR "Gemini API" OR Cohere OR Mistral OR '
-                 '"Meta Llama" OR "Hugging Face" OR "Together AI" OR Groq OR "xAI"'),
-            ]
+        # Provider terms grouped into 3 batches — all piped into one query each
+        _search_batches = [
+            # Batch A: Hyperscalers
+            ('cloud_hyper', ProviderType.CLOUD,
+             '"Amazon Web Services" OR AWS OR "Google Cloud" OR "Microsoft Azure" OR Azure'),
+            # Batch B: Neo/GPU clouds
+            ('cloud_neo', ProviderType.CLOUD,
+             'CoreWeave OR "Lambda Labs" OR Crusoe OR OVHcloud OR Vultr OR Paperspace OR Nebius OR "Oracle Cloud"'),
+            # Batch C: AI providers
+            ('ai', ProviderType.AI,
+             'OpenAI OR Anthropic OR "Vertex AI" OR "Gemini API" OR Cohere OR Mistral OR '
+             '"Meta Llama" OR "Hugging Face" OR "Together AI" OR Groq OR "xAI"'),
+        ]
 
-            def _parse_brave_age(age: str):
-                """Map Brave age string → (strength, weight, label)."""
-                age_lower = age.lower()
-                if any(x in age_lower for x in ['hour', 'day', 'week', 'month']):
-                    return SignalStrength.STRONG, 1.0, age
-                elif 'year' in age_lower and not any(str(n) in age_lower for n in range(2, 10)):
-                    return SignalStrength.MEDIUM, 0.6, age
-                elif age_lower:
-                    return SignalStrength.WEAK, 0.3, age
-                else:
-                    return SignalStrength.MEDIUM, 0.6, 'unknown date'
+        for _batch_id, _ptype, provider_terms_str in _search_batches:
+            try:
+                batch_q = f'{company_q} ({provider_terms_str}) {action_kw}'
+                results = serper_search(batch_q, num=10)
 
-            for _batch_id, _ptype, provider_terms_str in _brave_batches:
-                # Skip batch entirely if all providers in it are already found
-                # (quick heuristic — _classify_entry will skip duplicates anyway)
-                try:
-                    batch_q = f'{company_q} ({provider_terms_str}) {action_kw}'
-                    batch_r = requests.get(
-                        'https://api.search.brave.com/res/v1/web/search',
-                        headers={
-                            'Accept': 'application/json',
-                            'Accept-Encoding': 'gzip',
-                            'X-Subscription-Token': brave_key,
-                        },
-                        params={'q': batch_q, 'count': 10, 'text_decorations': False},
-                        timeout=self.TIMEOUT,
-                    )
-                    if batch_r.status_code != 200:
+                for item in results:
+                    title   = item.get('title', '')
+                    url     = item.get('url', '')
+                    snippet = item.get('snippet', '')
+                    date    = item.get('date', '')
+
+                    if not _is_valid_title(title):
                         continue
 
-                    for item in batch_r.json().get('web', {}).get('results', []):
-                        title   = item.get('title', '')
-                        url     = item.get('url', '')
-                        snippet = item.get('description', '')
-                        age     = item.get('age', '')
+                    str_strength, weight, age_label = parse_age_to_strength(date)
+                    strength = _STRENGTH_MAP.get(str_strength, SignalStrength.MEDIUM)
 
-                        if not _is_valid_title(title):
-                            continue
+                    for ptype, provider, wt_multiplier in _classify_entry(title, snippet):
+                        if provider not in found_providers:
+                            found_providers.add(provider)
+                            signals.append(AttributionSignal(
+                                provider_type=ptype,
+                                provider_name=provider,
+                                signal_source='partnership_announcement',
+                                signal_strength=strength,
+                                evidence_text=f'Partnership news ({age_label}): {title[:100]}',
+                                evidence_url=url,
+                                confidence_weight=weight * wt_multiplier,
+                            ))
 
-                        strength, weight, age_label = _parse_brave_age(age)
-
-                        for ptype, provider, wt_multiplier in _classify_entry(title, snippet):
-                            if provider not in found_providers:
-                                found_providers.add(provider)
-                                signals.append(AttributionSignal(
-                                    provider_type=ptype,
-                                    provider_name=provider,
-                                    signal_source='partnership_announcement',
-                                    signal_strength=strength,
-                                    evidence_text=f'Partnership news ({age_label}): {title[:100]}',
-                                    evidence_url=url,
-                                    confidence_weight=weight * wt_multiplier,
-                                ))
-
-                except Exception:
-                    continue
+            except Exception:
+                continue
 
             # ---------------------------------------------------------------- #
             # INVERTED SEARCH — hyperscalers only (3 calls max)               #
@@ -1809,24 +1785,13 @@ class AttributionEngine:
                 ptype = ProviderType.CLOUD
                 inverted_q = f'site:{inv_domain} "{company_name}"'
                 try:
-                    inv_r = requests.get(
-                        'https://api.search.brave.com/res/v1/web/search',
-                        headers={
-                            'Accept': 'application/json',
-                            'Accept-Encoding': 'gzip',
-                            'X-Subscription-Token': brave_key,
-                        },
-                        params={'q': inverted_q, 'count': 5, 'text_decorations': False},
-                        timeout=self.TIMEOUT,
-                    )
-                    if inv_r.status_code != 200:
-                        continue
+                    inv_results = serper_search(inverted_q, num=5)
 
-                    for item in inv_r.json().get('web', {}).get('results', []):
+                    for item in inv_results:
                         title   = item.get('title', '')
                         url     = item.get('url', '')
-                        snippet = item.get('description', '')
-                        age     = item.get('age', '')
+                        snippet = item.get('snippet', '')
+                        date    = item.get('date', '')
 
                         if not _is_valid_title(title):
                             continue
@@ -1837,7 +1802,8 @@ class AttributionEngine:
                         ):
                             continue
 
-                        strength, weight, age_label = _parse_brave_age(age)
+                        str_strength, weight, age_label = parse_age_to_strength(date)
+                        strength = _STRENGTH_MAP.get(str_strength, SignalStrength.MEDIUM)
 
                         if provider not in found_providers:
                             found_providers.add(provider)
@@ -1856,84 +1822,63 @@ class AttributionEngine:
                     continue
 
         # ------------------------------------------------------------------ #
-        # SOURCE 3: Broad company article scan (Brave, body-level keyword)  #
+        # SOURCE 3: Broad company article scan (body-level keyword)         #
         #                                                                    #
-        # The per-provider Brave queries above require the provider term to  #
-        # appear in the title or Brave snippet — missing providers that are  #
+        # The per-provider queries above require the provider term to       #
+        # appear in the title or snippet — missing providers that are       #
         # mentioned only in the article body (e.g. a funding article that   #
         # says "we use OpenAI and Gemini" in the body, not the title).      #
         #                                                                    #
-        # This source fetches the top 10 company-focused news articles from  #
-        # Brave (no provider filter) and runs the full cloud/AI keyword scan  #
-        # on the article body — catching any provider mentions regardless of #
-        # where they appear in the text.                                     #
+        # This source fetches the top 10 company-focused news articles      #
+        # (no provider filter) and runs the full cloud/AI keyword scan      #
+        # on the article body — catching any provider mentions regardless   #
+        # of where they appear in the text.                                 #
         # ------------------------------------------------------------------ #
-        if brave_key:
-            try:
-                # Broad company news query — no provider terms, just recency signal
-                broad_q = f'"{company_name}" (funding OR launches OR raises OR announces OR "built on" OR "powered by")'
-                if domain_stem and domain_stem not in company_lower:
-                    broad_q = f'("{company_name}" OR {domain_stem}) (funding OR launches OR raises OR announces OR "built on" OR "powered by")'
+        try:
+            # Broad company news query — no provider terms, just recency signal
+            broad_q = f'"{company_name}" (funding OR launches OR raises OR announces OR "built on" OR "powered by")'
+            if domain_stem and domain_stem not in company_lower:
+                broad_q = f'("{company_name}" OR {domain_stem}) (funding OR launches OR raises OR announces OR "built on" OR "powered by")'
 
-                broad_r = requests.get(
-                    'https://api.search.brave.com/res/v1/web/search',
-                    headers={
-                        'Accept': 'application/json',
-                        'Accept-Encoding': 'gzip',
-                        'X-Subscription-Token': brave_key,
-                    },
-                    params={'q': broad_q, 'count': 10, 'text_decorations': False},
-                    timeout=self.TIMEOUT,
-                )
-                if broad_r.status_code == 200:
-                    for item in broad_r.json().get('web', {}).get('results', []):
-                        art_url   = item.get('url', '')
-                        art_title = item.get('title', '')
-                        art_age   = item.get('age', '')
-                        if not art_url or not _is_valid_title(art_title):
-                            continue
+            broad_results = serper_search(broad_q, num=10)
+            for item in broad_results:
+                art_url   = item.get('url', '')
+                art_title = item.get('title', '')
+                art_date  = item.get('date', '')
+                if not art_url or not _is_valid_title(art_title):
+                    continue
 
-                        # Fetch and scan the article body
-                        body = self._fetch_article_excerpt(art_url, max_chars=4000)
-                        if not body:
-                            continue
+                # Fetch and scan the article body
+                body = self._fetch_article_excerpt(art_url, max_chars=4000)
+                if not body:
+                    continue
 
-                        # Keyword-scan body for cloud and AI provider terms
-                        # Use _keyword_scan (not _scan_job_sentences) — news articles should not
-                        # have job-posting filters applied (conjunctive sentence discard, hiring
-                        # language discard, etc.)
-                        cloud_hits = _keyword_scan(body, CLOUD_KEYWORDS)
-                        ai_hits    = _keyword_scan(body, AI_KEYWORDS)
+                # Keyword-scan body for cloud and AI provider terms
+                cloud_hits = _keyword_scan(body, CLOUD_KEYWORDS)
+                ai_hits    = _keyword_scan(body, AI_KEYWORDS)
 
-                        age_lower = art_age.lower()
-                        if any(x in age_lower for x in ['hour', 'day', 'week', 'month']):
-                            strength, weight, age_label = SignalStrength.STRONG, 1.0, art_age
-                        elif 'year' in age_lower and not any(str(n) in age_lower for n in range(2, 10)):
-                            strength, weight, age_label = SignalStrength.MEDIUM, 0.6, art_age
-                        elif age_lower:
-                            strength, weight, age_label = SignalStrength.WEAK, 0.3, art_age
-                        else:
-                            strength, weight, age_label = SignalStrength.MEDIUM, 0.6, 'unknown date'
+                str_strength, weight, age_label = parse_age_to_strength(art_date)
+                strength = _STRENGTH_MAP.get(str_strength, SignalStrength.MEDIUM)
 
-                        for provider, kws in {**cloud_hits, **ai_hits}.items():
-                            if provider in found_providers:
-                                continue
-                            ptype = (
-                                ProviderType.CLOUD if provider in cloud_hits
-                                else ProviderType.AI
-                            )
-                            found_providers.add(provider)
-                            signals.append(AttributionSignal(
-                                provider_type=ptype,
-                                provider_name=provider,
-                                signal_source='partnership_announcement',
-                                signal_strength=strength,
-                                evidence_text=f'Provider mention in article ({age_label}): {art_title[:100]}',
-                                evidence_url=art_url,
-                                confidence_weight=weight,
-                            ))
-            except Exception:
-                pass
+                for provider, kws in {**cloud_hits, **ai_hits}.items():
+                    if provider in found_providers:
+                        continue
+                    ptype = (
+                        ProviderType.CLOUD if provider in cloud_hits
+                        else ProviderType.AI
+                    )
+                    found_providers.add(provider)
+                    signals.append(AttributionSignal(
+                        provider_type=ptype,
+                        provider_name=provider,
+                        signal_source='partnership_announcement',
+                        signal_strength=strength,
+                        evidence_text=f'Provider mention in article ({age_label}): {art_title[:100]}',
+                        evidence_url=art_url,
+                        confidence_weight=weight,
+                    ))
+        except Exception:
+            pass
 
         # Step 3.5: Batch LLM relevance filter — discard signals about unrelated entities
         if signals and self.anthropic_client:
@@ -2718,39 +2663,27 @@ JSON:"""
                 except Exception:
                     break
 
-        # Phase B: Brave Search fallback (when sitemap found nothing)
+        # Phase B: Search fallback (when sitemap found nothing)
         if not investor_job_urls:
-            brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
-            if brave_key:
-                for board_domain in investor_board_domains:
-                    if investor_job_urls:
-                        break
-                    try:
-                        brave_query = f'"{company_name}" site:{board_domain}'
-                        resp = requests.get(
-                            'https://api.search.brave.com/res/v1/web/search',
-                            params={'q': brave_query, 'count': 5, 'text_decorations': False},
-                            headers={
-                                'Accept': 'application/json',
-                                'Accept-Encoding': 'gzip',
-                                'X-Subscription-Token': brave_key,
-                            },
-                            timeout=self.TIMEOUT,
-                        )
-                        if resp.status_code == 200:
-                            for result in resp.json().get('web', {}).get('results', []):
-                                url = result.get('url', '')
-                                if not url:
-                                    continue
-                                parsed_host = urlparse(url).netloc
-                                # Only individual job pages — skip board-level nav pages
-                                if (parsed_host == board_domain
-                                        and '/jobs/' in url
-                                        and url not in investor_job_urls
-                                        and url not in individual_job_urls):
-                                    investor_job_urls.append(url)
-                    except Exception:
-                        continue
+            for board_domain in investor_board_domains:
+                if investor_job_urls:
+                    break
+                try:
+                    search_query = f'"{company_name}" site:{board_domain}'
+                    results = serper_search(search_query, num=5)
+                    for result in results:
+                        url = result.get('url', '')
+                        if not url:
+                            continue
+                        parsed_host = urlparse(url).netloc
+                        # Only individual job pages — skip board-level nav pages
+                        if (parsed_host == board_domain
+                                and '/jobs/' in url
+                                and url not in investor_job_urls
+                                and url not in individual_job_urls):
+                            investor_job_urls.append(url)
+                except Exception:
+                    continue
 
         if investor_job_urls:
             print(f"    🏦 Investor job boards: {len(investor_job_urls)} postings found")
@@ -3059,7 +2992,6 @@ JSON:"""
 
         signals = []
         post_urls_to_fetch: List[str] = []
-        brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
 
         # Provider keywords to match in RSS titles/excerpts (specific)
         title_keywords = [
@@ -3080,40 +3012,25 @@ JSON:"""
             'performance', 'latency', 'reliability', 'migration',
         ]
 
-        # --- Step 0: Brave Search API ---
+        # --- Step 0: Google Search (via Serper) ---
         # Finds indexed blog posts that the company's own RSS/sitemap may miss.
-        # Query combines company name + domain + provider terms so results are
-        # scoped to this company's content (Brave doesn't support site: well,
-        # but name+domain together is specific enough).
-        if brave_key:
-            try:
-                apex = website.lstrip('www.')  # xflowpay.com
-                brave_q = (
-                    f'"{company_name}" {apex} '
-                    f'aws OR "amazon web services" OR "google cloud" OR azure '
-                    f'OR openai OR anthropic OR kubernetes OR eks OR "machine learning"'
-                )
-                brave_r = requests.get(
-                    'https://api.search.brave.com/res/v1/web/search',
-                    params={'q': brave_q, 'count': 10, 'search_lang': 'en'},
-                    headers={
-                        'Accept': 'application/json',
-                        'Accept-Encoding': 'gzip',
-                        'X-Subscription-Token': brave_key,
-                    },
-                    timeout=self.TIMEOUT,
-                )
-                if brave_r.status_code == 200:
-                    brave_results = brave_r.json().get('web', {}).get('results', [])
-                    matched = [
-                        res['url'] for res in brave_results
-                        if apex in res.get('url', '')       # must be on this domain
-                    ]
-                    if matched:
-                        print(f'    🔍 Brave Search: {len(matched)} blog post(s) found')
-                        post_urls_to_fetch.extend(matched)
-            except Exception:
-                pass
+        try:
+            apex = website.lstrip('www.')  # xflowpay.com
+            search_q = (
+                f'"{company_name}" {apex} '
+                f'aws OR "amazon web services" OR "google cloud" OR azure '
+                f'OR openai OR anthropic OR kubernetes OR eks OR "machine learning"'
+            )
+            search_results = serper_search(search_q, num=10)
+            matched = [
+                res['url'] for res in search_results
+                if apex in res.get('url', '')       # must be on this domain
+            ]
+            if matched:
+                print(f'    🔍 Google Search: {len(matched)} blog post(s) found')
+                post_urls_to_fetch.extend(matched)
+        except Exception:
+            pass
 
         # --- Step 1: RSS/Atom feed ---
         feed_paths = ['/feed', '/rss', '/blog/feed', '/feed.xml',
