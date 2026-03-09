@@ -157,5 +157,12 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
                 run_outreach_generation()
             except Exception as e:
                 print(f"  ⚠️  Outreach intelligence generation failed: {e}")
+
+            # Flush search API usage counters to DB
+            try:
+                from app.core.search import flush_usage_to_db
+                flush_usage_to_db()
+            except Exception as e:
+                print(f"  ⚠️  Search usage flush failed: {e}")
     finally:
         _active_run.clear()

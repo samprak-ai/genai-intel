@@ -10,25 +10,88 @@ Cost: $0.30 per 1,000 queries (vs Brave $50/mo cap).
 
 import os
 import re
+import threading
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 
 
 SERPER_URL = 'https://google.serper.dev/search'
 TIMEOUT = 6
 
 
-def serper_search(query: str, num: int = 10) -> list[dict]:
+# ---------------------------------------------------------------------------
+# Usage tracking — thread-safe counters flushed at end of pipeline run
+# ---------------------------------------------------------------------------
+
+_usage_lock = threading.Lock()
+_usage: dict[str, int] = {}  # key = "source" label, value = query count
+
+
+def _track(source: str) -> None:
+    """Increment the query counter for a given source."""
+    with _usage_lock:
+        _usage[source] = _usage.get(source, 0) + 1
+
+
+def get_usage_stats() -> dict[str, int]:
+    """Return a snapshot of current usage counters (does not reset)."""
+    with _usage_lock:
+        return dict(_usage)
+
+
+def flush_usage_to_db() -> dict:
+    """
+    Write accumulated query counts to the `search_api_usage` table in Supabase,
+    then reset counters. Returns the flushed stats.
+
+    Table schema:
+        usage_date  DATE
+        source      TEXT      (e.g. 'attribution', 'trigger_detection')
+        query_count INTEGER
+        created_at  TIMESTAMPTZ DEFAULT now()
+    """
+    with _usage_lock:
+        snapshot = dict(_usage)
+        _usage.clear()
+
+    if not snapshot:
+        return {}
+
+    try:
+        from supabase import create_client
+        sb = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_KEY'])
+        today = date.today().isoformat()
+        rows = [
+            {'usage_date': today, 'source': src, 'query_count': cnt}
+            for src, cnt in snapshot.items()
+        ]
+        sb.table('search_api_usage').upsert(
+            rows,
+            on_conflict='usage_date,source',
+        ).execute()
+        total = sum(snapshot.values())
+        print(f"  📊 Search API usage flushed: {total} queries ({snapshot})")
+    except Exception as e:
+        print(f"  ⚠️  Failed to flush search usage: {e}")
+        # Put counts back so they're not lost
+        with _usage_lock:
+            for src, cnt in snapshot.items():
+                _usage[src] = _usage.get(src, 0) + cnt
+
+    return snapshot
+
+
+def serper_search(query: str, num: int = 10, source: str = 'other') -> list[dict]:
     """
     Execute a Google search via Serper.dev.
 
     Returns list of dicts with normalized field names:
         {"title", "url", "snippet", "date"}
 
-    Field mapping from Serper raw response:
-        link   → url
-        snippet → snippet  (unchanged)
-        date   → date      (unchanged — may be "2 days ago" or "Jan 15, 2024")
+    Args:
+        query:  Search query string.
+        num:    Max results to return.
+        source: Label for usage tracking (e.g. 'attribution', 'trigger_detection').
     """
     api_key = os.getenv('SERPER_API_KEY', '')
     if not api_key:
@@ -43,10 +106,10 @@ def serper_search(query: str, num: int = 10) -> list[dict]:
             },
             timeout=TIMEOUT,
         )
+        _track(source)
         if resp.status_code != 200:
             return []
         raw_results = resp.json().get('organic', [])
-        # Normalize field names to match what callers expect
         return [
             {
                 'title':   r.get('title', ''),
