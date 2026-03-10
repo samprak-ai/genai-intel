@@ -241,7 +241,23 @@ export const reAttribute = (id: string) =>
 // Analytics
 // ---------------------------------------------------------------------------
 
+export interface SearchUsageDay {
+  usage_date: string;
+  attribution: number;
+  trigger_detection: number;
+  other: number;
+}
+
+export interface SearchUsage {
+  daily: SearchUsageDay[];
+  totals: Record<string, number>;
+  total_queries: number;
+  estimated_cost_usd: number;
+}
+
 export const getSummary = () => apiFetch<Summary>("/api/analytics/summary");
+export const getSearchUsage = (days = 30) =>
+  apiFetch<SearchUsage>(`/api/analytics/search-usage?days=${days}`);
 export const getCloudDistribution = () => apiFetch<ProviderDistribution[]>("/api/analytics/cloud-distribution");
 export const getAIDistribution = () => apiFetch<ProviderDistribution[]>("/api/analytics/ai-distribution");
 export const getRecentFunding = (limit = 20) =>

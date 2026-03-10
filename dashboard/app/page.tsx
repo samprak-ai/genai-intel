@@ -1,6 +1,7 @@
-import { getSummary, getRecentFunding, Summary } from "@/lib/api";
+import { getSummary, getRecentFunding, getSearchUsage, Summary, SearchUsage } from "@/lib/api";
 import { DistributionChart } from "@/components/DistributionChart";
 import { VerticalChart } from "@/components/VerticalChart";
+import { SearchUsageChart } from "@/components/SearchUsageChart";
 import { ProviderBadge } from "@/components/ProviderBadge";
 import { ConfidenceBar } from "@/components/ConfidenceBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,9 +12,14 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   let summary: Summary = { total_companies: 0, cloud_distribution: [], ai_distribution: [] };
   let recentFunding: any[] = [];
+  let searchUsage: SearchUsage = { daily: [], totals: {}, total_queries: 0, estimated_cost_usd: 0 };
 
   try {
-    [summary, recentFunding] = await Promise.all([getSummary(), getRecentFunding(15)]);
+    [summary, recentFunding, searchUsage] = await Promise.all([
+      getSummary(),
+      getRecentFunding(15),
+      getSearchUsage(30),
+    ]);
   } catch (_e) {
     // API unreachable — render with empty state rather than crashing
   }
@@ -69,6 +75,39 @@ export default async function DashboardPage() {
             {verticalDist.length > 0
               ? <VerticalChart data={verticalDist} />
               : <p className="text-sm text-gray-400 py-8 text-center">No data yet</p>}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Search API Usage */}
+      <div>
+        <h2 className="text-base font-semibold text-gray-700 mb-3">Search API Usage (Serper.dev)</h2>
+        <div className="grid grid-cols-3 gap-4 mb-4">
+          <KpiCard
+            label="Today"
+            value={String(searchUsage.daily.length > 0 ? (() => {
+              const today = new Date().toISOString().slice(0, 10);
+              const todayRow = searchUsage.daily.find(d => d.usage_date === today);
+              return todayRow ? todayRow.attribution + todayRow.trigger_detection + todayRow.other : 0;
+            })() : 0)}
+            sub="queries"
+          />
+          <KpiCard
+            label="Last 7 Days"
+            value={String(searchUsage.daily.slice(-7).reduce((s, d) => s + d.attribution + d.trigger_detection + d.other, 0))}
+            sub="queries"
+          />
+          <KpiCard
+            label="Est. Cost (30d)"
+            value={`$${searchUsage.estimated_cost_usd.toFixed(2)}`}
+            sub={`${searchUsage.total_queries.toLocaleString()} queries`}
+          />
+        </div>
+        <Card>
+          <CardContent className="pt-4">
+            {searchUsage.daily.length > 0
+              ? <SearchUsageChart data={searchUsage.daily} />
+              : <p className="text-sm text-gray-400 py-8 text-center">No usage data yet — will appear after next pipeline run</p>}
           </CardContent>
         </Card>
       </div>

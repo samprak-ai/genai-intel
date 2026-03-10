@@ -6,8 +6,11 @@ GET /api/analytics/recent-funding
 GET /api/analytics/signal-effectiveness
 GET /api/analytics/provider-changes
 GET /api/analytics/summary
+GET /api/analytics/search-usage
 """
 
+from datetime import date, timedelta
+from collections import defaultdict
 from fastapi import APIRouter, Depends, Query
 from api.deps import get_db
 from app.core.database import DatabaseClient
@@ -90,4 +93,51 @@ def summary(db: DatabaseClient = Depends(get_db)):
         "latest_run": latest_run,
         "tier_1_count": tier_1_count,
         "active_trigger_count": active_trigger_count,
+    }
+
+
+@router.get("/search-usage")
+def search_usage(
+    days: int = Query(30, ge=1, le=90),
+    db: DatabaseClient = Depends(get_db),
+):
+    """
+    Daily Serper API query counts by source, for the last N days.
+    Used by the dashboard to monitor search API spend.
+    """
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    rows = (
+        db.client.table('search_api_usage')
+        .select('usage_date,source,query_count')
+        .gte('usage_date', cutoff)
+        .order('usage_date')
+        .execute()
+    ).data or []
+
+    # Pivot rows into {date: {source: count}} for the chart
+    by_date: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    totals: dict[str, int] = defaultdict(int)
+    for r in rows:
+        d = r['usage_date']
+        src = r['source']
+        cnt = r['query_count']
+        by_date[d][src] = cnt
+        totals[src] += cnt
+
+    daily = [
+        {
+            "usage_date": d,
+            "attribution": by_date[d].get("attribution", 0),
+            "trigger_detection": by_date[d].get("trigger_detection", 0),
+            "other": by_date[d].get("other", 0),
+        }
+        for d in sorted(by_date.keys())
+    ]
+
+    total_queries = sum(totals.values())
+    return {
+        "daily": daily,
+        "totals": dict(totals),
+        "total_queries": total_queries,
+        "estimated_cost_usd": round(total_queries * 0.0003, 2),
     }
