@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   let summary: Summary = { total_companies: 0, cloud_distribution: [], ai_distribution: [] };
   let recentFunding: any[] = [];
-  let searchUsage: SearchUsage = { daily: [], totals: {}, total_queries: 0, estimated_cost_usd: 0 };
+  let searchUsage: SearchUsage = { daily: [], sources: [], totals: {}, total_queries: 0, estimated_cost_usd: 0 };
 
   try {
     [summary, recentFunding, searchUsage] = await Promise.all([
@@ -88,13 +88,15 @@ export default async function DashboardPage() {
             value={String(searchUsage.daily.length > 0 ? (() => {
               const today = new Date().toISOString().slice(0, 10);
               const todayRow = searchUsage.daily.find(d => d.usage_date === today);
-              return todayRow ? todayRow.attribution + todayRow.trigger_detection + todayRow.other : 0;
+              if (!todayRow) return 0;
+              return searchUsage.sources.reduce((s, src) => s + (Number(todayRow[src]) || 0), 0);
             })() : 0)}
             sub="queries"
           />
           <KpiCard
             label="Last 7 Days"
-            value={String(searchUsage.daily.slice(-7).reduce((s, d) => s + d.attribution + d.trigger_detection + d.other, 0))}
+            value={String(searchUsage.daily.slice(-7).reduce((s, d) =>
+              s + searchUsage.sources.reduce((t, src) => t + (Number(d[src]) || 0), 0), 0))}
             sub="queries"
           />
           <KpiCard
@@ -106,7 +108,7 @@ export default async function DashboardPage() {
         <Card>
           <CardContent className="pt-4">
             {searchUsage.daily.length > 0
-              ? <SearchUsageChart data={searchUsage.daily} />
+              ? <SearchUsageChart data={searchUsage.daily} sources={searchUsage.sources} />
               : <p className="text-sm text-gray-400 py-8 text-center">No usage data yet — will appear after next pipeline run</p>}
           </CardContent>
         </Card>

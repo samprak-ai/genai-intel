@@ -243,13 +243,12 @@ export const reAttribute = (id: string) =>
 
 export interface SearchUsageDay {
   usage_date: string;
-  attribution: number;
-  trigger_detection: number;
-  other: number;
+  [source: string]: string | number;  // dynamic source keys + usage_date
 }
 
 export interface SearchUsage {
   daily: SearchUsageDay[];
+  sources: string[];
   totals: Record<string, number>;
   total_queries: number;
   estimated_cost_usd: number;

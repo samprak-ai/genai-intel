@@ -117,26 +117,27 @@ def search_usage(
     # Pivot rows into {date: {source: count}} for the chart
     by_date: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     totals: dict[str, int] = defaultdict(int)
+    all_sources: set[str] = set()
     for r in rows:
         d = r['usage_date']
         src = r['source']
         cnt = r['query_count']
         by_date[d][src] = cnt
         totals[src] += cnt
+        all_sources.add(src)
+
+    # Sort sources by total volume descending for consistent chart ordering
+    sorted_sources = sorted(all_sources, key=lambda s: totals[s], reverse=True)
 
     daily = [
-        {
-            "usage_date": d,
-            "attribution": by_date[d].get("attribution", 0),
-            "trigger_detection": by_date[d].get("trigger_detection", 0),
-            "other": by_date[d].get("other", 0),
-        }
+        {"usage_date": d, **{src: by_date[d].get(src, 0) for src in sorted_sources}}
         for d in sorted(by_date.keys())
     ]
 
     total_queries = sum(totals.values())
     return {
         "daily": daily,
+        "sources": sorted_sources,
         "totals": dict(totals),
         "total_queries": total_queries,
         "estimated_cost_usd": round(total_queries * 0.0003, 2),

@@ -148,7 +148,7 @@ def _detect_leadership_hire(company_name: str) -> Optional[DetectedTrigger]:
     action_terms = 'hired OR joins OR appointed OR names OR announces'
     query = f'"{company_name}" ({title_terms}) ({action_terms})'
 
-    results = serper_search(query, num=5, source='trigger_detection')
+    results = serper_search(query, num=5, source='trigger_leadership')
     for r in results:
         age_days = parse_result_age(r.get('date', ''))
         if age_days > 60:
@@ -196,7 +196,7 @@ def _detect_product_launch(company_name: str, domain: str) -> Optional[DetectedT
         f'site:{clean_domain} OR site:techcrunch.com OR site:venturebeat.com OR site:theverge.com'
     )
 
-    results = serper_search(query, num=5, source='trigger_detection')
+    results = serper_search(query, num=5, source='trigger_product')
     for r in results:
         age_days = parse_result_age(r.get('date', ''))
         if age_days > 30:
@@ -225,7 +225,7 @@ def _detect_partnership(company_name: str) -> Optional[DetectedTrigger]:
         vendor_terms = ' OR '.join(f'"{v}"' for v in batch)
         query = f'"{company_name}" ({vendor_terms}) (partnership OR integration OR announces)'
 
-        results = serper_search(query, num=5, source='trigger_detection')
+        results = serper_search(query, num=5, source='trigger_partnership')
         for r in results:
             age_days = parse_result_age(r.get('date', ''))
             if age_days > 60:
@@ -249,7 +249,7 @@ def _detect_partnership(company_name: str) -> Optional[DetectedTrigger]:
 def _detect_press_feature(company_name: str) -> Optional[DetectedTrigger]:
     """Detect >=3 mentions in major tech press in last 14 days."""
     query = f'"{company_name}"'
-    results = serper_search(query, num=20, source='trigger_detection')
+    results = serper_search(query, num=20, source='trigger_press')
 
     recent_authority_urls = []
     for r in results:

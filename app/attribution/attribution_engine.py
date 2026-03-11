@@ -1738,7 +1738,7 @@ class AttributionEngine:
         for _batch_id, _ptype, provider_terms_str in _search_batches:
             try:
                 batch_q = f'{company_q} ({provider_terms_str}) {action_kw}'
-                results = serper_search(batch_q, num=10, source='attribution')
+                results = serper_search(batch_q, num=10, source='attr_partnership')
 
                 for item in results:
                     title   = item.get('title', '')
@@ -1785,7 +1785,7 @@ class AttributionEngine:
                 ptype = ProviderType.CLOUD
                 inverted_q = f'site:{inv_domain} "{company_name}"'
                 try:
-                    inv_results = serper_search(inverted_q, num=5, source='attribution')
+                    inv_results = serper_search(inverted_q, num=5, source='attr_inverted')
 
                     for item in inv_results:
                         title   = item.get('title', '')
@@ -1840,7 +1840,7 @@ class AttributionEngine:
             if domain_stem and domain_stem not in company_lower:
                 broad_q = f'("{company_name}" OR {domain_stem}) (funding OR launches OR raises OR announces OR "built on" OR "powered by")'
 
-            broad_results = serper_search(broad_q, num=10, source='attribution')
+            broad_results = serper_search(broad_q, num=10, source='attr_broad_scan')
             for item in broad_results:
                 art_url   = item.get('url', '')
                 art_title = item.get('title', '')
@@ -2670,7 +2670,7 @@ JSON:"""
                     break
                 try:
                     search_query = f'"{company_name}" site:{board_domain}'
-                    results = serper_search(search_query, num=5, source='attribution')
+                    results = serper_search(search_query, num=5, source='attr_investor_boards')
                     for result in results:
                         url = result.get('url', '')
                         if not url:
@@ -3021,7 +3021,7 @@ JSON:"""
                 f'aws OR "amazon web services" OR "google cloud" OR azure '
                 f'OR openai OR anthropic OR kubernetes OR eks OR "machine learning"'
             )
-            search_results = serper_search(search_q, num=10, source='attribution')
+            search_results = serper_search(search_q, num=10, source='attr_blog')
             matched = [
                 res['url'] for res in search_results
                 if apex in res.get('url', '')       # must be on this domain
