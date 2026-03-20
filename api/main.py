@@ -50,10 +50,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers — all protected by bearer-token auth
-app.include_router(startups.router,        dependencies=[Depends(verify_token)])
-app.include_router(analytics.router,       dependencies=[Depends(verify_token)])
-app.include_router(pipeline_router.router, dependencies=[Depends(verify_token)])
+# Routers — read endpoints are public, write endpoints use per-route auth
+app.include_router(startups.router)
+app.include_router(analytics.router)
+app.include_router(pipeline_router.router)
 
 
 # Cron endpoint — registered here (not in the protected pipeline router) so it

@@ -43,12 +43,6 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
 
-  if (res.status === 401 && typeof window !== "undefined") {
-    // Token invalid or expired — redirect to login
-    window.location.href = "/login";
-    return undefined as unknown as T;
-  }
-
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`API ${res.status}: ${text}`);

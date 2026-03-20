@@ -13,7 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel
 
-from api.deps import get_db
+from api.deps import get_db, verify_token
 from app.core.database import DatabaseClient
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
@@ -71,7 +71,7 @@ def get_run(
     return {"run": run, "logs": logs}
 
 
-@router.post("/trigger", status_code=202)
+@router.post("/trigger", status_code=202, dependencies=[Depends(verify_token)])
 def trigger_pipeline(body: TriggerRequest, background_tasks: BackgroundTasks):
     """
     Start a full weekly pipeline run in a background thread.

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import "./globals.css";
 
@@ -10,7 +11,10 @@ export const metadata: Metadata = {
   description: "AI startup cloud & AI provider attribution dashboard",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const store = await cookies();
+  const isAdmin = !!store.get("dashboard_token")?.value;
+
   return (
     <html lang="en">
       <body className={`${geist.className} bg-gray-50 text-gray-900 antialiased`}>
@@ -22,7 +26,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="flex gap-4 text-sm text-gray-600">
               <Link href="/" className="hover:text-gray-900 transition-colors">Dashboard</Link>
               <Link href="/companies" className="hover:text-gray-900 transition-colors">Companies</Link>
-              <Link href="/add" className="hover:text-gray-900 transition-colors">Add Company</Link>
+              {isAdmin && (
+                <Link href="/add" className="hover:text-gray-900 transition-colors">Add Company</Link>
+              )}
               <Link href="/runs" className="hover:text-gray-900 transition-colors">Pipeline Runs</Link>
               <Link href="/ready-to-engage" className="hover:text-gray-900 transition-colors">Ready to Engage</Link>
             </div>

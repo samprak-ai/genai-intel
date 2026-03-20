@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from api.deps import get_db
+from api.deps import get_db, verify_token
 from app.core.database import DatabaseClient
 from app.models import Startup
 from app.attribution.attribution_engine import AttributionEngine
@@ -91,7 +91,7 @@ def get_startup(startup_id: str, db: DatabaseClient = Depends(get_db)):
     }
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, dependencies=[Depends(verify_token)])
 def create_startup(body: StartupCreate, db: DatabaseClient = Depends(get_db)):
     """
     Add a new company and immediately run attribution.
@@ -144,7 +144,7 @@ def create_startup(body: StartupCreate, db: DatabaseClient = Depends(get_db)):
     }
 
 
-@router.patch("/{startup_id}")
+@router.patch("/{startup_id}", dependencies=[Depends(verify_token)])
 def patch_startup(startup_id: str, body: StartupPatch, db: DatabaseClient = Depends(get_db)):
     """Update manual enrichment data — marks re-attribution as requested"""
     startup = db.get_startup_by_id(startup_id)
@@ -158,7 +158,7 @@ def patch_startup(startup_id: str, body: StartupPatch, db: DatabaseClient = Depe
     return {"startup_id": startup_id, "override": updated}
 
 
-@router.post("/{startup_id}/re-attribute")
+@router.post("/{startup_id}/re-attribute", dependencies=[Depends(verify_token)])
 def re_attribute(startup_id: str, db: DatabaseClient = Depends(get_db)):
     """
     Re-run attribution for a startup using latest manual override data.
