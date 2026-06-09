@@ -69,6 +69,30 @@ def _parse_sources(raw: str) -> list[Source]:
     return out[:8]
 
 
+@router.get("/ask/_debug")
+def ask_debug():
+    """TEMPORARY: surface gbrain's runtime state (doctor + a query with stderr/exit)
+    so we can diagnose why retrieval is empty on the deployed container."""
+    env = dict(os.environ)
+    env["PATH"] = _BUN + os.pathsep + env.get("PATH", "")
+
+    def run(args):
+        try:
+            r = subprocess.run([_GBRAIN, *args], capture_output=True, text=True, env=env, timeout=90)
+            return {"rc": r.returncode, "stdout": (r.stdout or "")[:1200], "stderr": (r.stderr or "")[:1200]}
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}"}
+
+    return {
+        "gbrain_path": _GBRAIN,
+        "gbrain_exists": os.path.exists(_GBRAIN),
+        "has_GBRAIN_DATABASE_URL": bool(os.getenv("GBRAIN_DATABASE_URL")),
+        "has_OPENAI_API_KEY": bool(os.getenv("OPENAI_API_KEY")),
+        "doctor": run(["doctor", "--fast"]),
+        "query": run(["query", "funding round", "--no-expand", "--limit", "3"]),
+    }
+
+
 @router.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest):
     q = (req.question or "").strip()
