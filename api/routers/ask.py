@@ -33,10 +33,17 @@ slugs you use in [brackets]. If the retrieved context does not contain the answe
 plainly rather than guessing. Be concise, specific, and oriented toward what an account
 manager should DO or KNOW."""
 
-_KEYWORD_SYSTEM = """Extract 5-8 space-separated search keywords from the user's question.
-Return ONLY the keywords on one line — no punctuation, no explanation. Focus on company names,
-signal types (funding, hiring, product, acquisition, leadership), and domain terms. Drop
-filler words (who, which, what, should, the, and, for)."""
+_KEYWORD_SYSTEM = """You are a search query optimizer for a startup intelligence database.
+The database contains pages about startups: their funding rounds, hiring signals, product
+launches, leadership changes, and competitive moves.
+
+Rewrite the user's question into 3-6 keywords that will match those pages.
+Use ONLY terms that describe startup events: company names, signal types (funding, hiring,
+product launch, acquisition, leadership), financial terms (series A/B, raised, valuation,
+round), or industry terms (AI, SaaS, cloud, B2B).
+
+DO NOT include: AWS, AM, account manager, prioritize, should, who, which, largest, best.
+Return ONLY the keywords on a single line, space-separated, no punctuation, lowercase."""
 
 
 class AskRequest(BaseModel):
