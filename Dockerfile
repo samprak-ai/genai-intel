@@ -25,5 +25,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Railway provides $PORT
-CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Railway injects PORT; read it in Python so no shell expansion is required
+# (Railway runs the start command in exec form, which would pass "$PORT" literally).
+CMD ["python", "-c", "import os, uvicorn; uvicorn.run('api.main:app', host='0.0.0.0', port=int(os.environ.get('PORT', '8000')))"]
