@@ -55,7 +55,7 @@ def _gbrain_query(question: str, limit: int = 8) -> str:
     try:
         r = subprocess.run(
             [_GBRAIN, "query", question, "--no-expand", "--limit", str(limit)],
-            capture_output=True, text=True, env=env, timeout=60,
+            capture_output=True, text=True, env=env, timeout=120,
         )
         return r.stdout.strip()
     except Exception as e:
@@ -76,20 +76,23 @@ def ask_debug():
     env = dict(os.environ)
     env["PATH"] = _BUN + os.pathsep + env.get("PATH", "")
 
-    def run(args):
-        try:
-            r = subprocess.run([_GBRAIN, *args], capture_output=True, text=True, env=env, timeout=90)
-            return {"rc": r.returncode, "stdout": (r.stdout or "")[:1200], "stderr": (r.stderr or "")[:1200]}
-        except Exception as e:
-            return {"error": f"{type(e).__name__}: {e}"}
+    import time
 
+    def run(args, timeout=120):
+        t0 = time.time()
+        try:
+            r = subprocess.run([_GBRAIN, *args], capture_output=True, text=True, env=env, timeout=timeout)
+            return {"rc": r.returncode, "secs": round(time.time() - t0, 1),
+                    "stdout_len": len(r.stdout or ""), "stdout": (r.stdout or "")[:500],
+                    "stderr": (r.stderr or "")[:500]}
+        except Exception as e:
+            return {"error": f"{type(e).__name__}: {e}", "secs": round(time.time() - t0, 1)}
+
+    q = "Which startups raised the largest funding rounds, and who should an AWS AM prioritize?"
     return {
-        "gbrain_path": _GBRAIN,
-        "gbrain_exists": os.path.exists(_GBRAIN),
-        "has_GBRAIN_DATABASE_URL": bool(os.getenv("GBRAIN_DATABASE_URL")),
-        "has_OPENAI_API_KEY": bool(os.getenv("OPENAI_API_KEY")),
-        "doctor": run(["doctor", "--fast"]),
-        "query": run(["query", "funding round", "--no-expand", "--limit", "3"]),
+        "has_db": bool(os.getenv("GBRAIN_DATABASE_URL")),
+        "has_openai": bool(os.getenv("OPENAI_API_KEY")),
+        "query_exact_ask": run(["query", q, "--no-expand", "--limit", "8"]),
     }
 
 
