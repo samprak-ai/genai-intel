@@ -53,8 +53,10 @@ def _gbrain_query(question: str, limit: int = 8) -> str:
     env = dict(os.environ)
     env["PATH"] = _BUN + os.pathsep + env.get("PATH", "")
     try:
+        # No --no-expand: allow gbrain query expansion for better NL recall.
+        # --no-expand only helps with exact-slug lookups; NL questions need expansion.
         r = subprocess.run(
-            [_GBRAIN, "query", question, "--no-expand", "--limit", str(limit)],
+            [_GBRAIN, "query", question, "--limit", str(limit)],
             capture_output=True, text=True, env=env, timeout=120,
         )
         return r.stdout.strip()
@@ -95,8 +97,9 @@ def ask_debug():
         "has_ze": bool(os.getenv("ZEROENTROPY_API_KEY")),
         "gbrain_path": _GBRAIN,
         "list_pages": run(["list", "--limit", "5"]),
-        "query_simple": run(["query", "suno funding", "--no-expand", "--limit", "3"]),
-        "query_exact_ask": run(["query", q, "--no-expand", "--limit", "8"]),
+        "query_simple": run(["query", "suno funding", "--limit", "3"]),
+        "query_nl_no_expand": run(["query", q, "--no-expand", "--limit", "3"]),
+        "query_nl_with_expand": run(["query", q, "--limit", "3"]),
     }
 
 
