@@ -123,16 +123,20 @@ def ask_debug():
         except Exception as e:
             return {"error": f"{type(e).__name__}: {e}", "secs": round(time.time() - t0, 1)}
 
-    q = "Which startups raised the largest funding rounds, and who should an AWS AM prioritize?"
+    q_nl = "Which startups raised the largest funding rounds, and who should an AWS AM prioritize?"
+    q_co = "Tell me about Suno"
+    kw_nl = _extract_keywords(q_nl)
+    kw_co = _extract_keywords(q_co)
     return {
         "has_db": bool(os.getenv("GBRAIN_DATABASE_URL")),
         "has_openai": bool(os.getenv("OPENAI_API_KEY")),
         "has_ze": bool(os.getenv("ZEROENTROPY_API_KEY")),
         "gbrain_path": _GBRAIN,
-        "query_simple_suno": run(["query", "suno funding", "--no-expand", "--limit", "3"]),
-        "query_keyword_funding": run(["query", "funding raised series", "--no-expand", "--limit", "3"]),
-        "keywords_extracted": _extract_keywords(q),
-        "query_with_extracted_kw": run(["query", _extract_keywords(q), "--no-expand", "--limit", "5"]),
+        "query_hardcoded_suno_funding": run(["query", "suno funding", "--no-expand", "--limit", "3"]),
+        "keywords_for_nl_q": kw_nl,
+        "query_nl_via_extracted": run(["query", kw_nl, "--no-expand", "--limit", "3"]),
+        "keywords_for_suno_q": kw_co,
+        "query_suno_via_extracted": run(["query", kw_co, "--no-expand", "--limit", "3"]),
     }
 
 
