@@ -128,42 +128,6 @@ def _parse_sources(raw: str) -> list[Source]:
     return out[:8]
 
 
-@router.get("/ask/_debug")
-def ask_debug():
-    """TEMPORARY: surface gbrain's runtime state (doctor + a query with stderr/exit)
-    so we can diagnose why retrieval is empty on the deployed container."""
-    env = dict(os.environ)
-    env["PATH"] = _BUN + os.pathsep + env.get("PATH", "")
-
-    import time
-
-    def run(args, timeout=120):
-        t0 = time.time()
-        try:
-            r = subprocess.run([_GBRAIN, *args], capture_output=True, text=True, env=env, timeout=timeout)
-            return {"rc": r.returncode, "secs": round(time.time() - t0, 1),
-                    "stdout_len": len(r.stdout or ""), "stdout": (r.stdout or "")[:500],
-                    "stderr": (r.stderr or "")[:500]}
-        except Exception as e:
-            return {"error": f"{type(e).__name__}: {e}", "secs": round(time.time() - t0, 1)}
-
-    q_nl = "Which startups raised the largest funding rounds, and who should an AWS AM prioritize?"
-    q_co = "Tell me about Suno"
-    kw_nl = _extract_keywords(q_nl)
-    kw_co = _extract_keywords(q_co)
-    return {
-        "has_db": bool(os.getenv("GBRAIN_DATABASE_URL")),
-        "has_openai": bool(os.getenv("OPENAI_API_KEY")),
-        "has_ze": bool(os.getenv("ZEROENTROPY_API_KEY")),
-        "gbrain_path": _GBRAIN,
-        "query_hardcoded_suno_funding": run(["query", "suno funding", "--no-expand", "--limit", "3"]),
-        "keywords_for_nl_q": kw_nl,
-        "query_nl_via_extracted": run(["query", kw_nl, "--no-expand", "--limit", "3"]),
-        "keywords_for_suno_q": kw_co,
-        "query_suno_via_extracted": run(["query", kw_co, "--no-expand", "--limit", "3"]),
-    }
-
-
 @router.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest):
     q = (req.question or "").strip()
