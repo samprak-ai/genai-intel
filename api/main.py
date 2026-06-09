@@ -18,7 +18,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.deps import verify_token
-from api.routers import startups, analytics, pipeline as pipeline_router
+from api.routers import startups, analytics, pipeline as pipeline_router, ask as ask_router
 from api.routers.pipeline import cron_trigger_handler
 
 
@@ -54,6 +54,7 @@ app.add_middleware(
 app.include_router(startups.router)
 app.include_router(analytics.router)
 app.include_router(pipeline_router.router)
+app.include_router(ask_router.router)  # /api/ask — NL Q&A over the knowledge graph
 
 
 # Cron endpoint — registered here (not in the protected pipeline router) so it

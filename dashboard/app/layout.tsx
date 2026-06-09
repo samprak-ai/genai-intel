@@ -26,6 +26,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             <div className="flex gap-4 text-sm text-gray-600">
               <Link href="/" className="hover:text-gray-900 transition-colors">Dashboard</Link>
               <Link href="/companies" className="hover:text-gray-900 transition-colors">Companies</Link>
+              <Link href="/ask" className="hover:text-gray-900 transition-colors">Ask</Link>
               {isAdmin && (
                 <Link href="/add" className="hover:text-gray-900 transition-colors">Add Company</Link>
               )}

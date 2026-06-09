@@ -284,3 +284,24 @@ export const triggerPipeline = (body: {
   method: "POST",
   body: JSON.stringify(body),
 });
+
+// ---------------------------------------------------------------------------
+// Ask — natural-language Q&A over the knowledge graph (GBrain)
+// ---------------------------------------------------------------------------
+
+export interface AskSource {
+  slug: string;
+  score?: number;
+  title?: string;
+}
+
+export interface AskResult {
+  answer: string;
+  sources: AskSource[];
+}
+
+export const askGraph = (question: string) =>
+  apiFetch<AskResult>("/api/ask", {
+    method: "POST",
+    body: JSON.stringify({ question }),
+  });
