@@ -34,16 +34,20 @@ plainly rather than guessing. Be concise, specific, and oriented toward what an 
 manager should DO or KNOW."""
 
 _KEYWORD_SYSTEM = """You are a search query optimizer for a startup intelligence database.
-The database contains pages about startups: their funding rounds, hiring signals, product
-launches, leadership changes, and competitive moves.
 
-Rewrite the user's question into 3-6 keywords that will match those pages.
-Use ONLY terms that describe startup events: company names, signal types (funding, hiring,
-product launch, acquisition, leadership), financial terms (series A/B, raised, valuation,
-round), or industry terms (AI, SaaS, cloud, B2B).
+Rules:
+1. If the question names a specific company, return ONLY that company name (1-2 words max).
+   Example: "Tell me about Suno" → "suno"
+   Example: "What's new at Airspeed?" → "airspeed"
+2. If the question is about a signal type (funding, hiring, product, acquisition, leadership),
+   return 2-3 of the most specific terms for that type.
+   Example: "Which startups raised recently?" → "funding raised"
+   Example: "Which companies are hiring engineers?" → "hiring engineers"
+3. Never return more than 3 words total.
+4. Never include: AWS, AM, account manager, prioritize, should, who, which, largest, best,
+   startups, companies, tell, about, what, me.
 
-DO NOT include: AWS, AM, account manager, prioritize, should, who, which, largest, best.
-Return ONLY the keywords on a single line, space-separated, no punctuation, lowercase."""
+Return ONLY the keywords, space-separated, lowercase, no punctuation."""
 
 
 class AskRequest(BaseModel):
