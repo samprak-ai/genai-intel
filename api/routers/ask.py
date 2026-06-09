@@ -92,6 +92,10 @@ def ask_debug():
     return {
         "has_db": bool(os.getenv("GBRAIN_DATABASE_URL")),
         "has_openai": bool(os.getenv("OPENAI_API_KEY")),
+        "has_ze": bool(os.getenv("ZEROENTROPY_API_KEY")),
+        "gbrain_path": _GBRAIN,
+        "list_pages": run(["list", "--limit", "5"]),
+        "query_simple": run(["query", "suno funding", "--no-expand", "--limit", "3"]),
         "query_exact_ask": run(["query", q, "--no-expand", "--limit", "8"]),
     }
 
