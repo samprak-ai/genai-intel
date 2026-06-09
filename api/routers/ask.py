@@ -65,23 +65,43 @@ class AskResponse(BaseModel):
     sources: list[Source]
 
 
+# Signal-type keywords that exist in the brain as chunk headings
+_SIGNAL_TYPES = ("funding", "hiring", "product", "acquisition", "leadership", "raised", "series")
+
+
 def _extract_keywords(question: str) -> str:
-    """Rewrite a NL question into keyword-friendly search terms via Haiku."""
+    """Rewrite a NL question into 1-3 keyword search terms.
+
+    Strategy:
+    1. If question contains a recognizable signal type AND is short, extract that signal type.
+    2. Otherwise, use a Haiku call — but HARD-LIMIT output to 2 words in code.
+    """
+    q_lower = question.lower()
+
+    # Fast path: if question is just about a signal type (no company name context)
+    # pick the first signal keyword mentioned
+    signal_hit = next((s for s in _SIGNAL_TYPES if s in q_lower), None)
+
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
-        return question
+        return signal_hit or question
+
     try:
         resp = Anthropic(api_key=key).messages.create(
             model="claude-haiku-4-5",
-            max_tokens=60,
+            max_tokens=20,  # tiny budget forces conciseness
             system=_KEYWORD_SYSTEM,
             messages=[{"role": "user", "content": question}],
         )
         kw = resp.content[0].text.strip().lower()
-        # Fall back to original if response looks empty or weird
-        return kw if len(kw) > 3 else question
+        # Hard-limit to 2 words regardless of what LLM returned
+        words = [w for w in kw.split() if len(w) > 2][:2]
+        if words:
+            return " ".join(words)
     except Exception:
-        return question
+        pass
+
+    return signal_hit or question
 
 
 def _gbrain_query(question: str, limit: int = 8) -> str:
