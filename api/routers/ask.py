@@ -97,7 +97,9 @@ def ask_debug():
         "has_ze": bool(os.getenv("ZEROENTROPY_API_KEY")),
         "gbrain_path": _GBRAIN,
         "list_pages": run(["list", "--limit", "5"]),
-        "query_simple": run(["query", "suno funding", "--limit", "3"]),
+        "query_simple_suno": run(["query", "suno funding", "--limit", "3"]),
+        "query_keyword_funding": run(["query", "funding raised series", "--limit", "3"]),
+        "query_keyword_hiring": run(["query", "hiring engineers jobs", "--limit", "3"]),
         "query_nl_no_expand": run(["query", q, "--no-expand", "--limit", "3"]),
         "query_nl_with_expand": run(["query", q, "--limit", "3"]),
     }
