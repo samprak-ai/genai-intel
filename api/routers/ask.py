@@ -33,6 +33,11 @@ slugs you use in [brackets]. If the retrieved context does not contain the answe
 plainly rather than guessing. Be concise, specific, and oriented toward what an account
 manager should DO or KNOW."""
 
+_KEYWORD_SYSTEM = """Extract 5-8 space-separated search keywords from the user's question.
+Return ONLY the keywords on one line — no punctuation, no explanation. Focus on company names,
+signal types (funding, hiring, product, acquisition, leadership), and domain terms. Drop
+filler words (who, which, what, should, the, and, for)."""
+
 
 class AskRequest(BaseModel):
     question: str
@@ -49,14 +54,35 @@ class AskResponse(BaseModel):
     sources: list[Source]
 
 
+def _extract_keywords(question: str) -> str:
+    """Rewrite a NL question into keyword-friendly search terms via Haiku."""
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        return question
+    try:
+        resp = Anthropic(api_key=key).messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=60,
+            system=_KEYWORD_SYSTEM,
+            messages=[{"role": "user", "content": question}],
+        )
+        kw = resp.content[0].text.strip().lower()
+        # Fall back to original if response looks empty or weird
+        return kw if len(kw) > 3 else question
+    except Exception:
+        return question
+
+
 def _gbrain_query(question: str, limit: int = 8) -> str:
+    """Convert NL question to keywords then query gbrain hybrid search."""
     env = dict(os.environ)
     env["PATH"] = _BUN + os.pathsep + env.get("PATH", "")
+
+    search_terms = _extract_keywords(question)
+
     try:
-        # No --no-expand: allow gbrain query expansion for better NL recall.
-        # --no-expand only helps with exact-slug lookups; NL questions need expansion.
         r = subprocess.run(
-            [_GBRAIN, "query", question, "--limit", str(limit)],
+            [_GBRAIN, "query", search_terms, "--no-expand", "--limit", str(limit)],
             capture_output=True, text=True, env=env, timeout=120,
         )
         return r.stdout.strip()
@@ -96,12 +122,10 @@ def ask_debug():
         "has_openai": bool(os.getenv("OPENAI_API_KEY")),
         "has_ze": bool(os.getenv("ZEROENTROPY_API_KEY")),
         "gbrain_path": _GBRAIN,
-        "list_pages": run(["list", "--limit", "5"]),
-        "query_simple_suno": run(["query", "suno funding", "--limit", "3"]),
-        "query_keyword_funding": run(["query", "funding raised series", "--limit", "3"]),
-        "query_keyword_hiring": run(["query", "hiring engineers jobs", "--limit", "3"]),
-        "query_nl_no_expand": run(["query", q, "--no-expand", "--limit", "3"]),
-        "query_nl_with_expand": run(["query", q, "--limit", "3"]),
+        "query_simple_suno": run(["query", "suno funding", "--no-expand", "--limit", "3"]),
+        "query_keyword_funding": run(["query", "funding raised series", "--no-expand", "--limit", "3"]),
+        "keywords_extracted": _extract_keywords(q),
+        "query_with_extracted_kw": run(["query", _extract_keywords(q), "--no-expand", "--limit", "5"]),
     }
 
 
