@@ -36,6 +36,20 @@ class TriggerRequest(BaseModel):
 # Routes
 # ---------------------------------------------------------------------------
 
+@router.get("/_debug_init")
+def debug_pipeline_init():
+    """TEMPORARY: synchronously construct Pipeline(dry_run=True) and surface any
+    exception, since BackgroundTasks swallows errors silently and we have no
+    direct Railway log access. Remove once the daily-run regression is found."""
+    import traceback
+    try:
+        from pipeline import Pipeline
+        p = Pipeline(dry_run=True)
+        return {"ok": True, "message": "Pipeline() constructed successfully"}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()}
+
+
 @router.get("/status")
 def pipeline_status():
     """Returns whether a pipeline run is currently active and its run_id"""
