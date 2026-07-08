@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
 # Simple in-process run state — tracks the active background run
 _active_run: dict = {}
-# TEMPORARY diagnostic: last background-task crash, if any (see _run_pipeline_background)
+# Last background-task crash, if any (surfaced via /status since exceptions here were previously silently swallowed)
 _last_error: dict = {}
 
 
@@ -37,20 +37,6 @@ class TriggerRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
-
-@router.get("/_debug_init")
-def debug_pipeline_init():
-    """TEMPORARY: synchronously construct Pipeline(dry_run=True) and surface any
-    exception, since BackgroundTasks swallows errors silently and we have no
-    direct Railway log access. Remove once the daily-run regression is found."""
-    import traceback
-    try:
-        from pipeline import Pipeline
-        p = Pipeline(dry_run=True)
-        return {"ok": True, "message": "Pipeline() constructed successfully"}
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()}
-
 
 @router.get("/status")
 def pipeline_status():
@@ -145,7 +131,7 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
     import traceback
     from datetime import datetime
 
-    # TEMPORARY diagnostic: wrap the whole body (incl. imports) so a crash before
+    # Wrap the whole body (incl. imports) so a crash before
     # _active_run["started_at"] gets set is still visible via /api/pipeline/status,
     # instead of being silently swallowed by Starlette's BackgroundTask runner.
     _active_run["started_at"] = datetime.now().isoformat()
@@ -185,7 +171,7 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
             except Exception as e:
                 print(f"  ⚠️  Search usage flush failed: {e}")
     except Exception as e:
-        # TEMPORARY diagnostic: surface the crash via /api/pipeline/status
+        # Surface the crash via /api/pipeline/status
         # instead of letting Starlette's BackgroundTask runner swallow it silently.
         _last_error["error"] = f"{type(e).__name__}: {e}"
         _last_error["traceback"] = traceback.format_exc()
