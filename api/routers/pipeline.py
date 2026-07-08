@@ -20,6 +20,8 @@ router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
 # Simple in-process run state — tracks the active background run
 _active_run: dict = {}
+# TEMPORARY diagnostic: last background-task crash, if any (see _run_pipeline_background)
+_last_error: dict = {}
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +59,7 @@ def pipeline_status():
         "is_running": bool(_active_run),
         "run_id": _active_run.get("run_id"),
         "started_at": _active_run.get("started_at"),
+        "last_error": _last_error or None,
     }
 
 
@@ -139,12 +142,15 @@ def cron_trigger_handler(request: Request, background_tasks: BackgroundTasks):
 
 def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool):
     """Runs the full pipeline in a background thread and tracks active state"""
+    import traceback
     from datetime import datetime
-    from pipeline import Pipeline
 
+    # TEMPORARY diagnostic: wrap the whole body (incl. imports) so a crash before
+    # _active_run["started_at"] gets set is still visible via /api/pipeline/status,
+    # instead of being silently swallowed by Starlette's BackgroundTask runner.
     _active_run["started_at"] = datetime.now().isoformat()
-
     try:
+        from pipeline import Pipeline
         p = Pipeline(dry_run=dry_run)
         run = p.run_weekly(days_back=days_back, limit=limit)
         _active_run["run_id"] = run.id
@@ -178,5 +184,12 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
                 flush_usage_to_db()
             except Exception as e:
                 print(f"  ⚠️  Search usage flush failed: {e}")
+    except Exception as e:
+        # TEMPORARY diagnostic: surface the crash via /api/pipeline/status
+        # instead of letting Starlette's BackgroundTask runner swallow it silently.
+        _last_error["error"] = f"{type(e).__name__}: {e}"
+        _last_error["traceback"] = traceback.format_exc()
+        _last_error["at"] = datetime.now().isoformat()
+        print(f"  ❌ Pipeline background run crashed: {e}\n{traceback.format_exc()}")
     finally:
         _active_run.clear()
