@@ -285,7 +285,7 @@ class DomainResolver:
         (e.g. <a href="https://www.tryprofound.com/">Profound</a>).
 
         Algorithm:
-        1. Brave Search: "{company_name}" startup funding → top 5 results
+        1. GNews RSS: "{company_name}" startup funding → top funding articles
         2. Drop ARTICLE_SKIP_DOMAINS → take first 3 usable article URLs
         3. For each article: fetch → parse with BeautifulSoup
         4. For each <a href> in the article:
@@ -296,35 +296,20 @@ class DomainResolver:
            _test_domain_exists() + _name_appears_on_homepage()
         6. Return first that passes, else None (Stage 3 AI search takes over)
         """
-        brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
-        if not brave_key:
-            print('  ⚠️  Stage 2.5: BRAVE_SEARCH_API_KEY not set — skipping article-link search')
-            return None
+        from app.core.search import gnews_search
 
         name_lower = company_name.lower()
         name_slug = name_lower.replace(' ', '')
 
-        # --- Step 1: Brave search for funding articles ---
+        # --- Step 1: GNews RSS search for funding articles ---
         query = f'"{company_name}" startup funding'
         try:
-            resp = requests.get(
-                'https://api.search.brave.com/res/v1/web/search',
-                params={'q': query, 'count': 5, 'text_decorations': False},
-                headers={
-                    'Accept': 'application/json',
-                    'Accept-Encoding': 'gzip',
-                    'X-Subscription-Token': brave_key,
-                },
-                timeout=8,
-            )
-            if resp.status_code != 200:
-                return None
-            results = resp.json().get('web', {}).get('results', [])
+            results = gnews_search(query, num=10, source='domain_funding')
         except Exception:
             return None
 
         # --- Step 2: Filter article URLs; also score result domains directly ---
-        # A Brave result whose URL apex is the startup's own site (e.g. tryprofound.com/blog)
+        # A GNews result whose URL apex is the startup's own site (e.g. tryprofound.com/blog)
         # is a direct hit — score it before fetching any articles.
         article_urls = []
         direct_scores: dict[str, dict] = {}
@@ -340,7 +325,7 @@ class DomainResolver:
                 continue
 
             # Score the result domain itself using the page title as "anchor text"
-            title = (r.get('title', '') + ' ' + r.get('description', '')).lower()
+            title = (r.get('title', '') + ' ' + r.get('snippet', '') + ' ' + r.get('description', '')).lower()
             if apex not in direct_scores:
                 direct_scores[apex] = {'anchor': 0, 'pattern': 0, 'freq': 0}
             direct_scores[apex]['freq'] += 1
@@ -544,13 +529,13 @@ class DomainResolver:
     ) -> Optional[str]:
         """
         Stage 3: Web search + LLM (provider-agnostic) to find official website.
-        Searches Brave deterministically, then passes the result URLs/snippets to
-        the LLM so it can disambiguate generic company names. Last resort when
-        deterministic methods fail.
+        Searches Google News RSS deterministically, then passes the result
+        URLs/snippets to the LLM so it can disambiguate generic company names.
+        Last resort when deterministic methods fail.
 
         Note: the OpenAI-compatible DeepSeek endpoint has no `web_search` tool, so
-        the search is done out-of-band via Brave (already used in Stage 2.5) and
-        the evidence is fed into the prompt instead.
+        the search is done out-of-band via Google News RSS and the evidence is
+        fed into the prompt instead.
         """
         # Build context block from all available signals
         context_lines = []
@@ -568,35 +553,24 @@ class DomainResolver:
 
         # --- Deterministic web search (provider-independent evidence) ----------
         search_evidence = ""
-        brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
-        if brave_key:
+        try:
+            from app.core.search import gnews_search
             query = f'"{company_name}" official website'
-            try:
-                resp = requests.get(
-                    'https://api.search.brave.com/res/v1/web/search',
-                    params={'q': query, 'count': 5, 'text_decorations': False},
-                    headers={
-                        'Accept': 'application/json',
-                        'Accept-Encoding': 'gzip',
-                        'X-Subscription-Token': brave_key,
-                    },
-                    timeout=8,
-                )
-                if resp.status_code == 200:
-                    results = resp.json().get('web', {}).get('results', [])
-                    lines = []
-                    for r in results:
-                        url = r.get('url', '')
-                        if not url:
-                            continue
-                        host = urlparse(url).netloc.lower().replace('www.', '')
-                        if self._apex_domain(host) in self.ARTICLE_SKIP_DOMAINS:
-                            continue
-                        lines.append(f"- {r.get('title', '')} :: {url} :: {r.get('description', '')[:120]}")
-                    if lines:
-                        search_evidence = "Search results:\n" + "\n".join(lines[:8])
-            except Exception:
-                search_evidence = ""
+            results = gnews_search(query, num=8, source='domain_ai')
+            lines = []
+            for r in results:
+                url = r.get('url', '')
+                if not url:
+                    continue
+                host = urlparse(url).netloc.lower().replace('www.', '')
+                if self._apex_domain(host) in self.ARTICLE_SKIP_DOMAINS:
+                    continue
+                snippet = r.get('snippet', '') or r.get('description', '')
+                lines.append(f"- {r.get('title', '')} :: {url} :: {snippet[:120]}")
+            if lines:
+                search_evidence = "Search results:\n" + "\n".join(lines[:8])
+        except Exception:
+            search_evidence = ""
 
         prompt = f"""Find the official website domain for this startup:
 

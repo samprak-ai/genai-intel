@@ -33,7 +33,7 @@ MIGRATED = [
 # (Historic: classifier was exempt as a cheap decision-loop classifier, and
 # domain_resolver was exempt while it used the Anthropic `web_search` tool —
 # that tool has no DeepSeek equivalent, so resolution was rewritten to search
-# via Brave out-of-band and feed the evidence into the prompt.)
+# via Google News RSS out-of-band and feed the evidence into the prompt.)
 EXEMPT = {}
 
 

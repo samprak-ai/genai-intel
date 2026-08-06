@@ -51,7 +51,7 @@ Getting that answer manually means reading press releases, scraping job boards, 
   Next.js Dashboard       (cloud-intel.vercel.app)
 ```
 
-**Stack:** FastAPI (Railway) · Supabase · Next.js (Vercel) · Claude API · Perplexity Sonar · Brave Search API
+**Stack:** FastAPI (Railway) · Supabase · Next.js (Vercel) · DeepSeek API · Perplexity Sonar · Google News RSS (free)
 
 ---
 
@@ -85,7 +85,7 @@ WEAK · MODERATE · STRONG — based on raw signal score thresholds. Displayed a
 
 ## Key Technical Details
 
-**Brave API batching** — Partnership signals use 3 batched OR-queries instead of 21 per-provider calls, reducing Brave API usage from ~40 to ~7 calls per company.
+**Google News RSS batching** — Partnership signals use per-provider `"Company" "Provider"` queries (e.g. `"Render" GCP`, `"Startup" CoreWeave`) against the free, keyless Google News RSS feed, replacing paid API calls. Results are guarded by word-boundary company title matching to reject name-collision false positives.
 
 **Perplexity Sonar (Tier 4a)** — Fires when confidence < 60% after Tiers 1–3. Uses `sonar` model with `search_recency_filter='year'`. Citations returned by the API are stored as evidence URLs on signals. Weight mapping: ≥80 → 1.0 STRONG, 50–79 → 0.6 MEDIUM.
 
@@ -93,7 +93,7 @@ WEAK · MODERATE · STRONG — based on raw signal score thresholds. Displayed a
 
 **Website content scanning** — Scans privacy policy, DPA, security, trust, and compliance pages. Ownership-language regex (`processed by`, `stored on`, `servers located`) triggers STRONG weight signals.
 
-**Investor job boards** — Getro-based VC boards (a16z, Sequoia, 8VC, etc.) scanned via XML sitemaps with Brave fallback.
+**Investor job boards** — Getro-based VC boards (a16z, Sequoia, 8VC, etc.) scanned via XML sitemaps with Google News RSS fallback.
 
 ---
 
@@ -104,7 +104,7 @@ WEAK · MODERATE · STRONG — based on raw signal score thresholds. Displayed a
 | API / Backend | FastAPI (Python) |
 | AI — extraction & fallback | Claude API (Anthropic) — Claude Haiku |
 | AI — live web search | Perplexity Sonar |
-| Search | Brave Search API |
+| Search | Google News RSS (free)
 | Database | Supabase (PostgreSQL) |
 | Frontend | Next.js |
 | API deployment | Railway (auto-deploys on push to main) |
@@ -160,7 +160,7 @@ pip install -r requirements.txt
 
 # Configure environment variables
 cp .env.example .env
-# Required: ANTHROPIC_API_KEY, BRAVE_SEARCH_API_KEY, SUPABASE_URL, SUPABASE_KEY
+# Required: ANTHROPIC_API_KEY or DEEPSEEK_API_KEY, SUPABASE_URL, SUPABASE_KEY
 # Optional: PERPLEXITY_API_KEY (Tier 4a fallback), CRON_SECRET, DASHBOARD_SECRET
 
 # Run the pipeline

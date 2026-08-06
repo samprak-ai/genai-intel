@@ -12,7 +12,7 @@
 | **Database** | PostgreSQL 15 via Supabase | Supabase (managed) |
 | **Dashboard** | Next.js 16 + React 19 + Tailwind 4 | Vercel |
 | **LLM** | Anthropic Claude (Haiku for cheap tasks) | Anthropic API |
-| **Search** | Serper.dev (Google Search) + Perplexity Sonar | External APIs |
+| **Search** | Google News RSS + Perplexity Sonar | External APIs |
 | **Cron** | cron-job.org → POST to API endpoint | External |
 
 ---
@@ -206,6 +206,7 @@ NOTIFY pgrst, 'reload schema';
 | `pipeline_logs` | Structured logs per run (stage, level, message) |
 | `manual_overrides` | User-provided enrichment data |
 | `company_triggers` | Detected inflection events |
+| `search_api_usage` | Daily search query counts by source |
 
 ### Current Views
 
@@ -266,6 +267,7 @@ dashboard/
     ProviderBadge.tsx       — Provider name(s) with multi-provider handling
     DistributionChart.tsx   — Pie chart (Recharts)
     VerticalChart.tsx       — Vertical distribution chart
+    SearchUsageChart.tsx    — Stacked bar chart for API usage by source
     Tooltip.tsx             — Hover tooltip
   lib/
     api.ts                  — Typed API client (all fetch functions + interfaces)
@@ -460,17 +462,17 @@ except Exception as e:
     return default_result  # Never fail the whole pipeline
 ```
 
-### Serper.dev (Google Search API)
+### Google News RSS (free search)
 
 All search calls go through the shared helper in `app/core/search.py`:
 
 ```python
-from app.core.search import serper_search, parse_result_age, parse_age_to_strength
+from app.core.search import gnews_search, parse_result_age, parse_age_to_strength
 
 # Basic search — returns normalized [{"title", "url", "snippet", "date"}]
-results = serper_search("OpenAI funding 2025", num=10)
+results = gnews_search("OpenAI funding", num=10)
 
-# Parse date string to days ago (handles "2 days ago" + "Jan 15, 2024")
+# Parse date string to days ago (handles RFC-822 + ISO formats)
 days = parse_result_age(result['date'])
 
 # Temporal weighting for attribution signals
@@ -478,7 +480,7 @@ strength, weight, label = parse_age_to_strength(result['date'])
 # → ('strong', 1.0, '3 days ago')  or  ('weak', 0.3, 'Mar 2022')
 ```
 
-Under the hood: POST to `https://google.serper.dev/search` with `X-API-KEY` header.
+Under the hood: GET `https://news.google.com/rss/search` (keyless) with `verify=False`, parsed via `feedparser`. Uses `when:7d` recency windows and `_title_matches_company()` word-boundary guards to reject name-collision false positives.
 
 ### Perplexity Sonar (OpenAI-compatible)
 
@@ -510,7 +512,6 @@ citations = data.get('citations', [])
 | Variable | Purpose |
 |----------|---------|
 | `ANTHROPIC_API_KEY` | Claude API access |
-| `SERPER_API_KEY` | Serper.dev Google Search API |
 | `PERPLEXITY_API_KEY` | Perplexity Sonar (optional — graceful no-op if absent) |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_KEY` | Supabase anon API key |
@@ -613,7 +614,7 @@ if __name__ == '__main__':
 
 6. **Perplexity/Haiku may append prose after JSON**. Always regex-extract the JSON portion before parsing.
 
-7. **Serper.dev date strings** come in two formats: relative ("2 days ago") and absolute ("Jan 15, 2024"). Use `parse_result_age()` from `app/core/search` to normalize both to days.
+7. **Google News RSS date strings** come in RFC-822 ("Thu, 16 Jul 2026 07:00:00 GMT") and ISO formats. Use `parse_result_age()` from `app/core/search` to normalize both to days.
 
 8. **Cookie-based auth in Next.js**: `document.cookie` on client, `cookies()` from `next/headers` on server. The `apiFetch()` function handles both.
 

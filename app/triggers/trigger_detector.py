@@ -9,7 +9,7 @@ Signals detected:
   - press_feature:     >=3 mentions in major tech press in last 14 days
 
 Runs daily after recalculate_all_priorities(), only on Tier 1+2 companies.
-Cost: ~5 Serper calls/company × ~50 Tier 1+2 companies = ~250 Serper calls/day.
+Search-backed detectors use free Google News RSS (no API key required).
 """
 
 import os
@@ -148,7 +148,7 @@ def _detect_hiring_surge(company_name: str, website: str) -> Optional[DetectedTr
 def _detect_leadership_hire(company_name: str) -> Optional[DetectedTrigger]:
     """
     Detect CTO / VP Eng / Head of Infra new hire announcement.
-    Uses Brave search + optional Claude Haiku confirmation to filter job postings.
+    Uses Google News RSS + AI confirmation to filter job postings.
     """
     title_terms = (
         'CTO OR "VP Engineering" OR "Head of Infrastructure" OR '
@@ -280,7 +280,7 @@ def _detect_partnership(company_name: str) -> Optional[DetectedTrigger]:
 
 def _detect_funding(company_id: str, company_name: str) -> list:
     """
-    Detect recent funding rounds — Serper-independent.
+    Detect recent funding rounds — no search API required.
 
     Pulls fresh rounds from the `funding_events` table (already populated by the
     RSS-fed discovery pipeline) and emits one DetectedTrigger per round not yet

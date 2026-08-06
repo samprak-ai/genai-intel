@@ -1,11 +1,9 @@
 """
-Shared web search helper — wraps Serper.dev (Google Search API).
+Shared web search helper — Google News RSS (free, no API key).
 
-All search callers in the codebase use this module instead of calling
-Brave/Serper directly, so switching providers is a single-file change.
-
-Serper.dev docs: https://serper.dev/
-Cost: $0.30 per 1,000 queries (vs Brave $50/mo cap).
+All search callers in the codebase use this module instead of querying a
+paid search API directly, so switching/updating the source is a one-file
+change. Google News RSS is keyless and free.
 """
 
 import os
@@ -15,7 +13,6 @@ import requests
 from datetime import datetime, date, timezone
 
 
-SERPER_URL = 'https://google.serper.dev/search'
 TIMEOUT = 6
 
 
@@ -83,9 +80,9 @@ def flush_usage_to_db() -> dict:
 
 def gnews_search(query: str, num: int = 10, source: str = 'other') -> list[dict]:
     """
-    Execute a free Google News RSS search (no API key, no Serper credit needed).
+    Execute a free Google News RSS search (no API key, no cost).
 
-    Returns the same normalized shape as serper_search():
+    Returns entries in a normalized shape:
         {"title", "url", "snippet", "date"}
 
     Google News RSS is free and keyless. It is best for news-style queries
@@ -132,51 +129,9 @@ def gnews_search(query: str, num: int = 10, source: str = 'other') -> list[dict]
         return []
 
 
-def serper_search(query: str, num: int = 10, source: str = 'other') -> list[dict]:
-    """
-    Execute a Google search via Serper.dev.
-
-    Returns list of dicts with normalized field names:
-        {"title", "url", "snippet", "date"}
-
-    Args:
-        query:  Search query string.
-        num:    Max results to return.
-        source: Label for usage tracking (e.g. 'attribution', 'trigger_detection').
-    """
-    api_key = os.getenv('SERPER_API_KEY', '')
-    if not api_key:
-        return []
-    try:
-        resp = requests.post(
-            SERPER_URL,
-            json={'q': query, 'num': num},
-            headers={
-                'X-API-KEY': api_key,
-                'Content-Type': 'application/json',
-            },
-            timeout=TIMEOUT,
-        )
-        _track(source)
-        if resp.status_code != 200:
-            return []
-        raw_results = resp.json().get('organic', [])
-        return [
-            {
-                'title':   r.get('title', ''),
-                'url':     r.get('link', ''),
-                'snippet': r.get('snippet', ''),
-                'date':    r.get('date', ''),
-            }
-            for r in raw_results
-        ]
-    except Exception:
-        return []
-
-
 def parse_result_age(date_str: str) -> int:
     """
-    Parse a Serper or Google News date string into approximate days ago.
+    Parse a Google News RSS (or relative) date string into approximate days ago.
 
     Handles:
       - Relative: "2 days ago", "3 hours ago", "1 week ago"
@@ -232,7 +187,7 @@ def parse_result_age(date_str: str) -> int:
 
 def parse_age_to_strength(date_str: str):
     """
-    Map a Serper date string → (strength_label, weight, age_label).
+    Map a date string → (strength_label, weight, age_label).
 
     Used by attribution_engine for temporal weighting of partnership signals.
     Returns strings for strength to avoid importing models here — callers

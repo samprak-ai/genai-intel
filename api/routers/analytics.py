@@ -102,8 +102,8 @@ def search_usage(
     db: DatabaseClient = Depends(get_db),
 ):
     """
-    Daily Serper API query counts by source, for the last N days.
-    Used by the dashboard to monitor search API spend.
+    Daily search query counts by source, for the last N days.
+    Used by the dashboard to monitor search API usage and cost.
     """
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     rows = (

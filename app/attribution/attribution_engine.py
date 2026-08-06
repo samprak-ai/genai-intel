@@ -1704,7 +1704,7 @@ class AttributionEngine:
         # provider — lower noise than broad OR-groups.                        #
         #                                                                    #
         # A `when:` recency window keeps results fresh (when:7d = week,       #
-        # when:2d = 48 hours). Free via Google News RSS — no Serper credit.  #
+        # when:2d = 48 hours). Free via Google News RSS.                      #
         # ------------------------------------------------------------------ #
         _STRENGTH_MAP = {'strong': SignalStrength.STRONG, 'medium': SignalStrength.MEDIUM, 'weak': SignalStrength.WEAK}
 
@@ -2588,9 +2588,9 @@ JSON:"""
         #   job URLs including inactive postings.  Parse them to find company-specific
         #   URLs.  This is the most complete source.
         #
-        # Phase B — Brave Search fallback: Brave indexes these pages better than
-        #   Google and returns direct job URLs (no redirect unwrapping needed).
-        #   Used when sitemap is absent or company not found via sitemap.
+        # Phase B — Google News RSS search fallback: news results can surface
+        #   direct job listing URLs. Used when sitemap is absent or company not
+        #   found via sitemap.
 
         # Phase A: sitemap scan
         for board_domain, company_url_tpl in INVESTOR_JOB_BOARDS:
@@ -2926,8 +2926,8 @@ JSON:"""
         Discover and scan company blog posts for cloud/AI provider signals.
 
         Strategy:
-        0. Brave Search API (most powerful — finds indexed posts Google/Brave know
-           about even if they're not in the company's own sitemap/RSS)
+        0. Google News RSS search (free — finds indexed posts/news that the
+           company's own sitemap/RSS may miss)
            Query: "<company> site:domain.com aws OR kubernetes OR ..."
         1. RSS/Atom feed (reliable for WordPress/Ghost/Substack blogs)
            Paths tried: /feed, /rss, /blog/feed, /feed.xml, /atom.xml, /blog/rss.xml
@@ -2967,7 +2967,7 @@ JSON:"""
             'performance', 'latency', 'reliability', 'migration',
         ]
 
-        # --- Step 0: Google Search (via Serper) ---
+        # --- Step 0: Google News RSS search (free) ---
         # Finds indexed blog posts that the company's own RSS/sitemap may miss.
         try:
             apex = website.lstrip('www.')  # xflowpay.com
@@ -2982,7 +2982,7 @@ JSON:"""
                 if apex in res.get('url', '')       # must be on this domain
             ]
             if matched:
-                print(f'    🔍 Google Search: {len(matched)} blog post(s) found')
+                print(f'    🔍 GNews RSS Search: {len(matched)} blog post(s) found')
                 post_urls_to_fetch.extend(matched)
         except Exception:
             pass

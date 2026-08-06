@@ -81,7 +81,7 @@ export default async function DashboardPage() {
 
       {/* Search API Usage */}
       <div>
-        <h2 className="text-base font-semibold text-gray-700 mb-3">Search API Usage (Serper.dev)</h2>
+        <h2 className="text-base font-semibold text-gray-700 mb-3">Search Usage</h2>
         <div className="grid grid-cols-3 gap-4 mb-4">
           <KpiCard
             label="Today"
