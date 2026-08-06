@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 
 @dataclass
 class DetectedTrigger:
-    trigger_type: str           # hiring_surge | leadership_hire | product_launch | partnership | press_feature
+    trigger_type: str           # funding | hiring_surge | leadership_hire | product_launch | partnership | press_feature
     trigger_label: str          # Human-readable description
     detected_date: datetime     # When detected
     source_url: Optional[str]   # Evidence URL (None for aggregate triggers like hiring_surge)
@@ -241,6 +241,62 @@ def _detect_partnership(company_name: str) -> Optional[DetectedTrigger]:
     return None
 
 
+def _detect_funding(company_id: str, company_name: str) -> list:
+    """
+    Detect recent funding rounds — Serper-independent.
+
+    Pulls fresh rounds from the `funding_events` table (already populated by the
+    RSS-fed discovery pipeline) and emits one DetectedTrigger per round not yet
+    recorded. Uses the event's source_url as the dedup key so each round fires
+    exactly once, forever — no outside search API required.
+
+    Returns a list (one entry per new round) because a company can raise more
+    than once; each round gets its own trigger.
+    """
+    from supabase import create_client
+    sb = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_KEY'])
+
+    try:
+        res = sb.table('funding_events').select(
+            'id, startup_id, funding_amount_usd, funding_round, announcement_date, source_url'
+        ).eq('startup_id', company_id).order('announcement_date', desc=True).limit(5).execute()
+    except Exception as e:
+        print(f"      ⚠️  Funding trigger lookup failed for {company_name}: {e}")
+        return []
+
+    funding_triggers = []
+    for f in (res.data or []):
+        amt = f.get('funding_amount_usd')
+        rnd = f.get('funding_round')
+        if not (amt or rnd):
+            continue
+        if not f.get('source_url'):
+            continue
+        if not rnd or rnd in ('UNKNOWN', 'unknown'):
+            rnd = None
+        # announcement_date is NOT NULL and unique per (startup, amount, date), so
+        # it disambiguates distinct rounds that happen to share a source_url.
+        date = f.get('announcement_date')
+        source_url = f.get('source_url')
+        if date:
+            source_url = f"{source_url}#round-{date}-{amt or 'na'}"
+        if amt:
+            label = f"Raised ${amt}M {rnd}" if rnd else f"Raised ${amt}M funding round"
+        else:
+            label = f"Funding: {rnd or 'round detected'}"
+        funding_triggers.append(DetectedTrigger(
+            trigger_type='funding',
+            trigger_label=label,
+            detected_date=datetime.now(timezone.utc),
+            source_url=source_url,
+            signal_strength='strong' if amt and amt >= 50 else 'moderate',
+        ))
+
+    if funding_triggers:
+        print(f"      💰 {company_name}: {len(funding_triggers)} recent funding round(s) detected")
+    return funding_triggers
+
+
 def _detect_press_feature(company_name: str) -> Optional[DetectedTrigger]:
     """Detect >=3 mentions in major tech press in last 14 days."""
     query = f'"{company_name}"'
@@ -277,6 +333,7 @@ def detect_triggers(
     company_name: str,
     domain: str,
     existing_triggers: list[dict],
+    company_id: str = "",
 ) -> list[DetectedTrigger]:
     """
     Run all trigger detectors for a company.
@@ -290,6 +347,7 @@ def detect_triggers(
 
     new_triggers: list[DetectedTrigger] = []
     detectors = [
+        lambda: _detect_funding(company_id, company_name),
         lambda: _detect_hiring_surge(company_name, domain),
         lambda: _detect_leadership_hire(company_name),
         lambda: _detect_product_launch(company_name, domain),
@@ -301,6 +359,13 @@ def detect_triggers(
         try:
             result = detector()
             if result:
+                if isinstance(result, list):
+                    for r in result:
+                        key = (r.trigger_type, r.source_url)
+                        if key not in existing_keys:
+                            new_triggers.append(r)
+                            existing_keys.add(key)
+                    continue
                 key = (result.trigger_type, result.source_url)
                 if key not in existing_keys:
                     new_triggers.append(result)
@@ -389,7 +454,7 @@ def run_trigger_detection(dry_run: bool = False) -> dict:
 
         # Run detection
         print(f"    Scanning {name}...")
-        new_triggers = detect_triggers(name, website, existing_triggers)
+        new_triggers = detect_triggers(name, website, existing_triggers, company_id=company_id)
 
         if new_triggers:
             print(f"    ✅ {name}: {len(new_triggers)} new trigger(s)")
