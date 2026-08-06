@@ -12,12 +12,15 @@ Run from CSV:       python3 pipeline.py --domains-file companies.csv
 import os
 import sys
 import time
+import threading
 import argparse
 import csv
 import json
 from datetime import datetime, date
 from typing import Optional
 from dotenv import load_dotenv
+
+_PRINT_LOCK = threading.Lock()
 
 from app.models import FundingEvent, Startup, WeeklyRun
 from app.discovery.funding_discovery import FundingDiscovery
@@ -343,45 +346,79 @@ class Pipeline:
                         merged = list(dict.fromkeys(existing + override['evidence_urls']))
                         evidence_url_map[event.company_name] = merged
 
-        for i, event in enumerate(attributable, 1):
-            print(f"\n  [{i}/{len(attributable)}] {event.company_name} ({event.website})")
+        try:
+            max_workers = max(1, int(os.environ.get('PIPELINE_MAX_WORKERS', '8')))
+        except ValueError:
+            max_workers = 8
 
-            try:
-                cloud_attr, ai_attr = self.attribution.attribute_startup(
-                    company_name=event.company_name,
-                    website=event.website,
-                    article_text=event.raw_article_text,
-                    lead_investors=event.lead_investors or [],
-                    founder_background=event.founder_background or [],
-                    evidence_urls=evidence_url_map.get(event.company_name, []),
-                    industry=event.industry,
-                )
+        if max_workers > 1 and len(attributable) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            results = self._attribute_parallel(attributable, evidence_url_map, max_workers)
+        else:
+            results = self._attribute_sequential(attributable, evidence_url_map)
 
-                result = {
-                    "event": event,
-                    "cloud_attribution": cloud_attr,
-                    "ai_attribution": ai_attr,
-                    "attributed": bool(cloud_attr or ai_attr)
-                }
-                results.append(result)
-
-                if cloud_attr or ai_attr:
-                    attributed_count += 1
-
-            except Exception as e:
-                self._log_error(f"attribute:{event.company_name}", str(e))
-                results.append({
-                    "event": event,
-                    "cloud_attribution": None,
-                    "ai_attribution": None,
-                    "attributed": False,
-                    "error": str(e)
-                })
-
-        self.run.startups_attributed = attributed_count
-        print(f"\n  ✅ Attribution complete: {attributed_count}/{len(attributable)} attributed")
+        self.run.startups_attributed = sum(1 for r in results if r["attributed"])
+        print(f"\n  ✅ Attribution complete: {self.run.startups_attributed}/{len(attributable)} attributed")
 
         return results
+
+    def _attribute_one(self, index: int, event: "FundingEvent", evidence_url_map: dict) -> dict:
+        """Attribution for a single company. Thread-safe: only touches the engine's
+        reentrant read-only state, so it can run concurrently across companies."""
+        try:
+            cloud_attr, ai_attr = self.attribution.attribute_startup(
+                company_name=event.company_name,
+                website=event.website,
+                article_text=event.raw_article_text,
+                lead_investors=event.lead_investors or [],
+                founder_background=event.founder_background or [],
+                evidence_urls=evidence_url_map.get(event.company_name, []),
+                industry=event.industry,
+            )
+            return {
+                "index": index,
+                "event": event,
+                "cloud_attribution": cloud_attr,
+                "ai_attribution": ai_attr,
+                "attributed": bool(cloud_attr or ai_attr),
+            }
+        except Exception as e:
+            self._log_error(f"attribute:{event.company_name}", str(e))
+            return {
+                "index": index,
+                "event": event,
+                "cloud_attribution": None,
+                "ai_attribution": None,
+                "attributed": False,
+                "error": str(e),
+            }
+
+    def _attribute_sequential(self, attributable: list, evidence_url_map: dict) -> list:
+        results = []
+        total = len(attributable)
+        for i, event in enumerate(attributable, 1):
+            print(f"\n  [{i}/{total}] {event.company_name} ({event.website})")
+            results.append(self._attribute_one(i, event, evidence_url_map))
+        return results
+
+    def _attribute_parallel(self, attributable: list, evidence_url_map: dict, max_workers: int) -> list:
+        """Attribute many companies concurrently, preserving input order."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        total = len(attributable)
+        done = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {
+                pool.submit(self._attribute_one, idx, event, evidence_url_map): (idx, event)
+                for idx, event in enumerate(attributable, 1)
+            }
+            completed = {}
+            for future in as_completed(futures):
+                done += 1
+                result = future.result()
+                completed[result["index"]] = result
+                with _PRINT_LOCK:
+                    print(f"\r  [progress {done}/{total}] {result['event'].company_name}", flush=True)
+        return [completed[i] for i in range(1, total + 1)]
 
     # ========================================================================
     # STAGE 4: STORAGE
@@ -604,8 +641,9 @@ class Pipeline:
         return self.run
 
     def _log_error(self, context: str, message: str) -> None:
-        self.errors.append({"context": context, "error": message, "time": str(datetime.now())})
-        print(f"  ⚠️  Error in {context}: {message}")
+        with _PRINT_LOCK:
+            self.errors.append({"context": context, "error": message, "time": str(datetime.now())})
+            print(f"  ⚠️  Error in {context}: {message}")
 
     # ========================================================================
     # DISPLAY HELPERS
