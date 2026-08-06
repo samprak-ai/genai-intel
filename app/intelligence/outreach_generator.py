@@ -174,25 +174,16 @@ def generate_outreach_intelligence(
         trigger_list=trigger_list,
     )
 
-    # Step 5: Call Claude Haiku
-    api_key = os.getenv('ANTHROPIC_API_KEY', '')
-    if not api_key:
-        print(f"    ⚠️  No ANTHROPIC_API_KEY — skipping LLM generation for {company_name}")
-        return OutreachIntelligence(
-            engagement_timing=timing,
-            recommended_angle=None,
-            key_signals=[],
-        )
-
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        resp = client.messages.create(
-            model=MODEL,
-            max_tokens=600,
-            messages=[{'role': 'user', 'content': prompt}],
-        )
-        raw = resp.content[0].text.strip()
+        from app.services.ai_client import complete, is_configured
+        if not is_configured():
+            print(f"    ⚠️  No API key for active provider — skipping LLM generation for {company_name}")
+            return OutreachIntelligence(
+                engagement_timing=timing,
+                recommended_angle=None,
+                key_signals=[],
+            )
+        raw = complete(MODEL, None, prompt, max_tokens=600)
 
         # Parse JSON (Haiku may append prose after the JSON object)
         json_match = re.search(r'\{[\s\S]*\}', raw)

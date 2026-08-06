@@ -11,13 +11,12 @@ gathering and should not be added to search queries.
 Uses Claude Haiku for cost efficiency (~$0.0002 per classification).
 """
 
-import os
 import re
 import json
 from dataclasses import dataclass
 from typing import Optional
 
-import anthropic
+from app.services.ai_client import complete, is_configured
 
 from app.taxonomy import (
     TAXONOMY,
@@ -93,15 +92,14 @@ def classify_company(
     On failure (missing API key, LLM error, invalid response), returns a result
     with None fields and reasoning explaining the failure.
     """
-    api_key = os.getenv('ANTHROPIC_API_KEY')
-    if not api_key:
+    if not is_configured():
         return ClassificationResult(
             vertical=None,
             sub_vertical=None,
             cloud_propensity=None,
             classification_confidence=None,
             classification_source="llm_classification",
-            reasoning="No ANTHROPIC_API_KEY available",
+            reasoning="No API key available for active provider",
         )
 
     # Build prompt
@@ -123,13 +121,8 @@ def classify_company(
 
     # Call Claude Haiku
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
-            model='claude-haiku-4-5-20251001',
-            max_tokens=300,
-            messages=[{'role': 'user', 'content': prompt}],
-        )
-        raw = response.content[0].text.strip()
+        from app.services.ai_client import complete
+        raw = complete('claude-haiku-4-5-20251001', None, prompt, max_tokens=300)
     except Exception as e:
         return ClassificationResult(
             vertical=None,

@@ -16,7 +16,9 @@ from datetime import datetime, timedelta
 from typing import List, Optional
 from bs4 import BeautifulSoup
 import anthropic
+import httpx
 import os
+from app.services.ai_client import complete, is_configured
 import ssl
 from urllib.parse import quote_plus
 from app.models import FundingEvent
@@ -31,9 +33,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 class FundingDiscovery:
 
     def __init__(self):
-        self.anthropic_client = anthropic.Anthropic(
-            api_key=os.getenv('ANTHROPIC_API_KEY')
-        )
+        self.anthropic_client = True if is_configured() else None
 
     def discover_recent_funding(self, days_back: int = 7, limit: Optional[int] = None) -> List[FundingEvent]:
         print(f"\n🔍 Discovering funding events from last {days_back} days...")
@@ -409,12 +409,7 @@ Rules:
 Return ONLY valid JSON, no explanation."""
 
         try:
-            message = self.anthropic_client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=500,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            response_text = message.content[0].text.strip()
+            response_text = complete("claude-haiku-4-5-20251001", None, prompt, max_tokens=500)
             if '```json' in response_text:
                 response_text = response_text.split('```json')[1].split('```')[0]
             elif '```' in response_text:
@@ -451,17 +446,12 @@ Return ONLY valid JSON, no explanation."""
             )
         except json.JSONDecodeError:
             return None
-        except anthropic.RateLimitError:
+        except (anthropic.RateLimitError, httpx.HTTPStatusError):
             # Issue 3: Handle rate limits explicitly — wait and retry once
             print(f"    ⚠️  Rate limit hit — waiting 60s then retrying...")
             time.sleep(60)
             try:
-                message = self.anthropic_client.messages.create(
-                    model="claude-haiku-4-5-20251001",
-                    max_tokens=500,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                response_text = message.content[0].text.strip()
+                response_text = complete("claude-haiku-4-5-20251001", None, prompt, max_tokens=500)
                 if '```json' in response_text:
                     response_text = response_text.split('```json')[1].split('```')[0]
                 elif '```' in response_text:

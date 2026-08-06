@@ -7,7 +7,8 @@ CLI), then synthesizes a cited answer with Claude, grounded ONLY in what was ret
 Prototype note: this shells out to the local `gbrain` CLI, so it works when the FastAPI
 backend runs on the machine that holds the brain (local dev, or a host with gbrain + the
 brain). For deployed use the brain must be hosted (gbrain --supabase) and reachable here.
-Requires env: ANTHROPIC_API_KEY, OPENAI_API_KEY (gbrain embeddings), and gbrain on PATH.
+Requires env: an AI provider key (ANTHROPIC_API_KEY or DEEPSEEK_API_KEY per
+AI_PROVIDER), OPENAI_API_KEY (gbrain embeddings), and gbrain on PATH.
 """
 
 import os
@@ -16,7 +17,8 @@ import subprocess
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from anthropic import Anthropic
+
+from app.services.ai_client import complete, is_configured
 
 router = APIRouter(prefix="/api", tags=["ask"])
 
@@ -82,18 +84,14 @@ def _extract_keywords(question: str) -> str:
     # pick the first signal keyword mentioned
     signal_hit = next((s for s in _SIGNAL_TYPES if s in q_lower), None)
 
-    key = os.getenv("ANTHROPIC_API_KEY")
-    if not key:
+    if not is_configured():
         return signal_hit or question
 
     try:
-        resp = Anthropic(api_key=key).messages.create(
-            model="claude-haiku-4-5",
+        kw = complete(
+            "claude-haiku-4-5", _KEYWORD_SYSTEM, question,
             max_tokens=20,  # tiny budget forces conciseness
-            system=_KEYWORD_SYSTEM,
-            messages=[{"role": "user", "content": question}],
-        )
-        kw = resp.content[0].text.strip().lower()
+        ).strip().lower()
         # Hard-limit to 2 words regardless of what LLM returned
         words = [w for w in kw.split() if len(w) > 2][:2]
         if words:
@@ -141,17 +139,14 @@ def ask(req: AskRequest):
             sources=[],
         )
 
-    key = os.getenv("ANTHROPIC_API_KEY")
-    if not key:
-        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured")
+    if not is_configured():
+        raise HTTPException(status_code=500, detail="AI provider API key not configured")
 
-    resp = Anthropic(api_key=key).messages.create(
-        model=_MODEL,
+    answer = complete(
+        _MODEL,
+        _SYNTH,
+        f"QUESTION: {q}\n\nRETRIEVED KNOWLEDGE-GRAPH CONTEXT:\n{raw}\n\n"
+        f"Answer using only this context; cite the page slugs you use.",
         max_tokens=700,
-        system=_SYNTH,
-        messages=[{"role": "user", "content": (
-            f"QUESTION: {q}\n\nRETRIEVED KNOWLEDGE-GRAPH CONTEXT:\n{raw}\n\n"
-            f"Answer using only this context; cite the page slugs you use."
-        )}],
     )
-    return AskResponse(answer=resp.content[0].text.strip(), sources=_parse_sources(raw))
+    return AskResponse(answer=answer, sources=_parse_sources(raw))

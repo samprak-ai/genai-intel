@@ -8,9 +8,9 @@ import dns.resolver
 import requests
 from typing import Optional
 from urllib.parse import urlparse
-import anthropic
 import os
 from bs4 import BeautifulSoup
+from app.services.ai_client import complete, is_configured
 
 
 class DomainResolver:
@@ -56,9 +56,8 @@ class DomainResolver:
     STARTUP_PREFIXES = ('try', 'get', 'use', 'go', 'meet', 'join', 'run', 'with')
 
     def __init__(self):
-        self.anthropic_client = anthropic.Anthropic(
-            api_key=os.getenv('ANTHROPIC_API_KEY')
-        )
+        # No Anthropic client — all LLM calls route through app.services.ai_client
+        # (provider-agnostic via AI_PROVIDER).
         
         # Domains to reject
         self.reject_patterns = [
@@ -544,9 +543,14 @@ class DomainResolver:
         source_url: Optional[str] = None,
     ) -> Optional[str]:
         """
-        Stage 3: Use Claude Sonnet with web search to find official website.
-        Passes full funding context so Claude can disambiguate generic company names.
-        Last resort when deterministic methods fail.
+        Stage 3: Web search + LLM (provider-agnostic) to find official website.
+        Searches Brave deterministically, then passes the result URLs/snippets to
+        the LLM so it can disambiguate generic company names. Last resort when
+        deterministic methods fail.
+
+        Note: the OpenAI-compatible DeepSeek endpoint has no `web_search` tool, so
+        the search is done out-of-band via Brave (already used in Stage 2.5) and
+        the evidence is fed into the prompt instead.
         """
         # Build context block from all available signals
         context_lines = []
@@ -562,36 +566,58 @@ class DomainResolver:
             context_lines.append(f"- Funding announcement URL: {source_url}")
         context_block = "\n".join(context_lines) if context_lines else "(no additional context)"
 
+        # --- Deterministic web search (provider-independent evidence) ----------
+        search_evidence = ""
+        brave_key = os.getenv('BRAVE_SEARCH_API_KEY', '')
+        if brave_key:
+            query = f'"{company_name}" official website'
+            try:
+                resp = requests.get(
+                    'https://api.search.brave.com/res/v1/web/search',
+                    params={'q': query, 'count': 5, 'text_decorations': False},
+                    headers={
+                        'Accept': 'application/json',
+                        'Accept-Encoding': 'gzip',
+                        'X-Subscription-Token': brave_key,
+                    },
+                    timeout=8,
+                )
+                if resp.status_code == 200:
+                    results = resp.json().get('web', {}).get('results', [])
+                    lines = []
+                    for r in results:
+                        url = r.get('url', '')
+                        if not url:
+                            continue
+                        host = urlparse(url).netloc.lower().replace('www.', '')
+                        if self._apex_domain(host) in self.ARTICLE_SKIP_DOMAINS:
+                            continue
+                        lines.append(f"- {r.get('title', '')} :: {url} :: {r.get('description', '')[:120]}")
+                    if lines:
+                        search_evidence = "Search results:\n" + "\n".join(lines[:8])
+            except Exception:
+                search_evidence = ""
+
         prompt = f"""Find the official website domain for this startup:
 
 Company: "{company_name}"
 Context:
 {context_block}
 
-Search for the company's official website. Many company names are generic words (e.g. "Badge", \
+{search_evidence if search_evidence else "Search for the company's official website first."}
+
+Many company names are generic words (e.g. "Badge", \
 "Jump", "Nimble", "Pulse") that could belong to multiple unrelated companies — use the funding \
-context above to find the correct startup, not an unrelated business with the same name.
+context and search results above to find the correct startup, not an unrelated business with the same name.
 
 Return ONLY the root domain, e.g. "trybadge.com" or "getnimble.ai". No protocol, no paths, no \
 explanation. If you cannot confidently identify the correct domain, return: NOT_FOUND"""
 
         try:
-            message = self.anthropic_client.messages.create(
-                model="claude-sonnet-4-20250514",
-                max_tokens=200,
-                tools=[{
-                    "type": "web_search_20250305",
-                    "name": "web_search"
-                }],
-                messages=[{"role": "user", "content": prompt}]
-            )
-
-            # Extract text from last content block (the final answer after tool use)
-            response = ""
-            for block in reversed(message.content):
-                if hasattr(block, "text") and block.text.strip():
-                    response = block.text.strip()
-                    break
+            from app.services.ai_client import complete
+            if not is_configured():
+                return None
+            response = complete("claude-sonnet-4-20250514", None, prompt, max_tokens=200)
 
             if not response:
                 return None

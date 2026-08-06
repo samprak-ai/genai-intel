@@ -84,27 +84,22 @@ def _confirm_hire_with_haiku(company_name: str, title: str, snippet: str) -> Opt
     Use Claude Haiku to confirm a search result is an actual hire, not a job posting.
     Returns True (confirmed hire), False (job posting), or None (couldn't determine / fail-open).
     """
-    api_key = os.getenv('ANTHROPIC_API_KEY', '')
-    if not api_key:
-        return None  # fail-open: no API key means we accept the result
+    from app.services.ai_client import complete, is_configured
+    if not is_configured():
+        return None  # fail-open: no active-provider API key means we accept the result
 
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        resp = client.messages.create(
-            model='claude-3-5-haiku-latest',
+        answer = complete(
+            'claude-3-5-haiku-latest',
+            None,
+            (
+                f'Is this a news article about {company_name} actually hiring/appointing '
+                f'a new executive, or is it a job posting/recruitment ad?\n\n'
+                f'Title: {title}\nSnippet: {snippet}\n\n'
+                f'Reply with ONLY "hire" or "posting".'
+            ),
             max_tokens=50,
-            messages=[{
-                'role': 'user',
-                'content': (
-                    f'Is this a news article about {company_name} actually hiring/appointing '
-                    f'a new executive, or is it a job posting/recruitment ad?\n\n'
-                    f'Title: {title}\nSnippet: {snippet}\n\n'
-                    f'Reply with ONLY "hire" or "posting".'
-                ),
-            }],
-        )
-        answer = resp.content[0].text.strip().lower()
+        ).strip().lower()
         return 'hire' in answer
     except Exception:
         return None  # fail-open

@@ -54,7 +54,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, quote_plus, urlparse
-import anthropic
+from app.services.ai_client import complete, is_configured
 import urllib3
 
 from app.models import (
@@ -629,12 +629,8 @@ class AttributionEngine:
     TIMEOUT = 6
 
     def __init__(self):
-        self.anthropic_client = None
+        self.anthropic_client = True if is_configured() else None
         self.subprocessors_parser = SubprocessorsParser()
-
-        api_key = os.getenv('ANTHROPIC_API_KEY')
-        if api_key:
-            self.anthropic_client = anthropic.Anthropic(api_key=api_key)
 
     # Confidence threshold below which we invoke the LLM fallback (Tier 4)
     LLM_FALLBACK_THRESHOLD = 0.60
@@ -1996,12 +1992,7 @@ Return ONLY valid JSON — no markdown, no prose.
 JSON:"""
 
         try:
-            response = self.anthropic_client.messages.create(
-                model='claude-haiku-4-5-20251001',
-                max_tokens=600,
-                messages=[{'role': 'user', 'content': prompt}]
-            )
-            raw = response.content[0].text.strip()
+            raw = complete('claude-haiku-4-5-20251001', None, prompt, max_tokens=600)
         except Exception as e:
             print(f"    ⚠️  Relevance filter LLM call failed: {e} — passing all signals through")
             return signals
@@ -3885,12 +3876,7 @@ JSON response:"""
 
         # ── Call the LLM ──────────────────────────────────────────────────────
         try:
-            response = self.anthropic_client.messages.create(
-                model='claude-haiku-4-5-20251001',
-                max_tokens=800,
-                messages=[{'role': 'user', 'content': prompt}]
-            )
-            raw = response.content[0].text.strip()
+            raw = complete('claude-haiku-4-5-20251001', None, prompt, max_tokens=800)
         except Exception as e:
             print(f"    ⚠️  LLM call failed: {e}")
             return []
