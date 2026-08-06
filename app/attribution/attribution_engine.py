@@ -64,7 +64,7 @@ from app.models import (
     INVESTOR_CLOUD_PRIORS, FOUNDER_CLOUD_PRIORS, HARDWARE_INDUSTRIES,
 )
 from app.attribution.subprocessors_parser import SubprocessorsParser
-from app.core.search import serper_search, parse_age_to_strength
+from app.core.search import gnews_search, parse_age_to_strength
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -1695,46 +1695,66 @@ class AttributionEngine:
         except Exception:
             pass
 
-        # ------------------------------------------------------------------ #
-        # SOURCE 2: Brave Search API — 3 batched queries (was: 21+16=37)    #
+# ------------------------------------------------------------------ #
+        # SOURCE 2: Per-provider-pair Google News RSS queries               #
         #                                                                    #
-        # Instead of one query per provider (21 calls), we fire 3 batched   #
-        # OR-queries covering all providers in a single round-trip each:    #
-        #   Batch A — Hyperscalers (AWS / GCP / Azure)                      #
-        #   Batch B — Neo/GPU clouds                                         #
-        #   Batch C — AI providers                                           #
+        # For each major cloud/AI provider we fire ONE query of the form      #
+        #   '"<company>" <Provider>' (e.g. '"Render" GCP', '"Render" OCI')   #
+        # which surfaces news directly connecting the startup to that         #
+        # provider — lower noise than broad OR-groups.                        #
         #                                                                    #
-        # Results are parsed with _classify_entry (same as Google News),    #
-        # which already handles all provider terms via _PROVIDER_TERM_MAP.  #
-        # Inverted site: searches are kept only for the 3 hyperscalers      #
-        # (they publish customer case studies; AI providers don't).         #
+        # A `when:` recency window keeps results fresh (when:7d = week,       #
+        # when:2d = 48 hours). Free via Google News RSS — no Serper credit.  #
         # ------------------------------------------------------------------ #
-
         _STRENGTH_MAP = {'strong': SignalStrength.STRONG, 'medium': SignalStrength.MEDIUM, 'weak': SignalStrength.WEAK}
 
         company_q = f'"{company_name}"'
         if domain_stem and domain_stem not in company_lower:
             company_q = f'{company_q} OR {domain_stem}'
-        action_kw = 'partnership OR announces OR integrates OR "built on" OR "powered by" OR deal OR raises'
 
-        # Provider terms grouped into 3 batches — all piped into one query each
-        _search_batches = [
-            # Batch A: Hyperscalers
-            ('cloud_hyper', ProviderType.CLOUD,
-             '"Amazon Web Services" OR AWS OR "Google Cloud" OR "Microsoft Azure" OR Azure'),
-            # Batch B: Neo/GPU clouds
-            ('cloud_neo', ProviderType.CLOUD,
-             'CoreWeave OR "Lambda Labs" OR Crusoe OR OVHcloud OR Vultr OR Paperspace OR Nebius OR "Oracle Cloud"'),
-            # Batch C: AI providers
-            ('ai', ProviderType.AI,
-             'OpenAI OR Anthropic OR "Vertex AI" OR "Gemini API" OR Cohere OR Mistral OR '
-             '"Meta Llama" OR "Hugging Face" OR "Together AI" OR Groq OR "xAI"'),
+        # Curated search term → (ProviderType, provider name). We know which
+        # provider a pair-query targets without relying on title keyword match.
+        _provider_pairs = [
+            # Cloud hyperscalers
+            ('GCP',             ProviderType.CLOUD, 'GCP'),
+            ('Google Cloud',    ProviderType.CLOUD, 'GCP'),
+            ('AWS',             ProviderType.CLOUD, 'AWS'),
+            ('Amazon Web Services', ProviderType.CLOUD, 'AWS'),
+            ('Azure',           ProviderType.CLOUD, 'Azure'),
+            ('Microsoft Azure', ProviderType.CLOUD, 'Azure'),
+            ('OCI',             ProviderType.CLOUD, 'OCI'),
+            ('Oracle Cloud',    ProviderType.CLOUD, 'OCI'),
+            # Neo / GPU clouds
+            ('CoreWeave',       ProviderType.CLOUD, 'CoreWeave'),
+            ('Lambda Labs',     ProviderType.CLOUD, 'Lambda'),
+            ('Crusoe',          ProviderType.CLOUD, 'Crusoe'),
+            ('Nebius',          ProviderType.CLOUD, 'Nebius'),
+            ('Vultr',           ProviderType.CLOUD, 'Vultr'),
+            ('Paperspace',      ProviderType.CLOUD, 'Paperspace'),
+            ('OVHcloud',        ProviderType.CLOUD, 'OVH'),
+            # AI providers
+            ('OpenAI',          ProviderType.AI,    'OpenAI'),
+            ('Anthropic',       ProviderType.AI,    'Anthropic'),
+            ('Vertex AI',       ProviderType.AI,    'Google AI'),
+            ('Gemini',          ProviderType.AI,    'Google AI'),
+            ('Cohere',          ProviderType.AI,    'Cohere'),
+            ('Mistral',         ProviderType.AI,    'Mistral'),
+            ('Groq',            ProviderType.AI,    'Groq'),
+            ('xAI',             ProviderType.AI,    'xAI / Grok'),
+            ('Hugging Face',    ProviderType.AI,    'Hugging Face'),
+            ('Together AI',     ProviderType.AI,    'Together AI'),
         ]
-
-        for _batch_id, _ptype, provider_terms_str in _search_batches:
+        _seen_pair_provider = set()
+        for term, ptype, provider_name in _provider_pairs:
+            # Skip providers already resolved by an earlier source, and only
+            # fire the first query variant for each provider (e.g. "GCP" fires,
+            # then "Google Cloud" is skipped because GCP already matched).
+            if provider_name in found_providers or provider_name in _seen_pair_provider:
+                continue
+            _seen_pair_provider.add(provider_name)
             try:
-                batch_q = f'{company_q} ({provider_terms_str}) {action_kw}'
-                results = serper_search(batch_q, num=10, source='attr_partnership')
+                pair_q = f'{company_q} "{term}" when:7d'
+                results = gnews_search(pair_q, num=5, source='attr_partnership')
 
                 for item in results:
                     title   = item.get('title', '')
@@ -1748,79 +1768,23 @@ class AttributionEngine:
                     str_strength, weight, age_label = parse_age_to_strength(date)
                     strength = _STRENGTH_MAP.get(str_strength, SignalStrength.MEDIUM)
 
-                    for ptype, provider, wt_multiplier in _classify_entry(title, snippet):
-                        if provider not in found_providers:
-                            found_providers.add(provider)
-                            signals.append(AttributionSignal(
-                                provider_type=ptype,
-                                provider_name=provider,
-                                signal_source='partnership_announcement',
-                                signal_strength=strength,
-                                evidence_text=f'Partnership news ({age_label}): {title[:100]}',
-                                evidence_url=url,
-                                confidence_weight=weight * wt_multiplier,
-                            ))
-
+                    found_providers.add(provider_name)
+                    signals.append(AttributionSignal(
+                        provider_type=ptype,
+                        provider_name=provider_name,
+                        signal_source='partnership_announcement',
+                        signal_strength=strength,
+                        evidence_text=f'Pair {term} news ({age_label}): {title[:100]}',
+                        evidence_url=url,
+                        confidence_weight=weight,
+                    ))
             except Exception:
                 continue
-
-            # ---------------------------------------------------------------- #
-            # INVERTED SEARCH — hyperscalers only (3 calls max)               #
-            # site:aws.amazon.com / cloud.google.com / azure.microsoft.com    #
-            # Skipped for AI providers — they rarely publish startup-specific  #
-            # content on their own domains that would rank in Brave.           #
-            # ---------------------------------------------------------------- #
-            _inverted_cloud = {
-                'AWS':   'aws.amazon.com',
-                'GCP':   'cloud.google.com',
-                'Azure': 'azure.microsoft.com',
-            }
-            for provider, inv_domain in _inverted_cloud.items():
-                if provider in found_providers:
-                    continue  # already have a signal
-                ptype = ProviderType.CLOUD
-                inverted_q = f'site:{inv_domain} "{company_name}"'
-                try:
-                    inv_results = serper_search(inverted_q, num=5, source='attr_inverted')
-
-                    for item in inv_results:
-                        title   = item.get('title', '')
-                        url     = item.get('url', '')
-                        snippet = item.get('snippet', '')
-                        date    = item.get('date', '')
-
-                        if not _is_valid_title(title):
-                            continue
-
-                        entry_text = f'{title} {snippet}'.lower()
-                        if company_lower not in entry_text and (
-                            not domain_stem or domain_stem not in entry_text
-                        ):
-                            continue
-
-                        str_strength, weight, age_label = parse_age_to_strength(date)
-                        strength = _STRENGTH_MAP.get(str_strength, SignalStrength.MEDIUM)
-
-                        if provider not in found_providers:
-                            found_providers.add(provider)
-                            signals.append(AttributionSignal(
-                                provider_type=ptype,
-                                provider_name=provider,
-                                signal_source='partnership_announcement',
-                                signal_strength=strength,
-                                evidence_text=f'Provider news ({age_label}): {title[:100]}',
-                                evidence_url=url,
-                                confidence_weight=weight,
-                            ))
-                            break
-
-                except Exception:
-                    continue
 
         # ------------------------------------------------------------------ #
         # SOURCE 3: Broad company article scan (body-level keyword)         #
         #                                                                    #
-        # The per-provider queries above require the provider term to       #
+        # The per-provider query above requires the provider term to        #
         # appear in the title or snippet — missing providers that are       #
         # mentioned only in the article body (e.g. a funding article that   #
         # says "we use OpenAI and Gemini" in the body, not the title).      #
@@ -1836,7 +1800,7 @@ class AttributionEngine:
             if domain_stem and domain_stem not in company_lower:
                 broad_q = f'("{company_name}" OR {domain_stem}) (funding OR launches OR raises OR announces OR "built on" OR "powered by")'
 
-            broad_results = serper_search(broad_q, num=10, source='attr_broad_scan')
+            broad_results = gnews_search(broad_q, num=10, source='attr_broad_scan')
             for item in broad_results:
                 art_url   = item.get('url', '')
                 art_title = item.get('title', '')
@@ -2661,7 +2625,7 @@ JSON:"""
                     break
                 try:
                     search_query = f'"{company_name}" site:{board_domain}'
-                    results = serper_search(search_query, num=5, source='attr_investor_boards')
+                    results = gnews_search(search_query, num=5, source='attr_investor_boards')
                     for result in results:
                         url = result.get('url', '')
                         if not url:
@@ -3012,7 +2976,7 @@ JSON:"""
                 f'aws OR "amazon web services" OR "google cloud" OR azure '
                 f'OR openai OR anthropic OR kubernetes OR eks OR "machine learning"'
             )
-            search_results = serper_search(search_q, num=10, source='attr_blog')
+            search_results = gnews_search(search_q, num=10, source='attr_blog')
             matched = [
                 res['url'] for res in search_results
                 if apex in res.get('url', '')       # must be on this domain

@@ -81,6 +81,57 @@ def flush_usage_to_db() -> dict:
     return snapshot
 
 
+def gnews_search(query: str, num: int = 10, source: str = 'other') -> list[dict]:
+    """
+    Execute a free Google News RSS search (no API key, no Serper credit needed).
+
+    Returns the same normalized shape as serper_search():
+        {"title", "url", "snippet", "date"}
+
+    Google News RSS is free and keyless. It is best for news-style queries
+    (leadership, press, product, partnership) and supports limited operators
+    like site:url. It does NOT support advanced `site:domain` operators as
+    richly as a full web search API.
+
+    Args:
+        query:  Search query string.
+        num:    Max results to return (RSS may return fewer; we cap to this).
+        source: Label for usage tracking (e.g. 'trigger_leadership').
+    """
+    if not query:
+        return []
+    try:
+        from urllib.parse import quote_plus
+        import feedparser
+        q = quote_plus(query)
+        rss_url = (
+            f'https://news.google.com/rss/search?q={q}'
+            f'&hl=en-US&gl=US&ceid=US:en'
+        )
+        resp = requests.get(
+            rss_url, timeout=TIMEOUT,
+            headers={'User-Agent': 'Mozilla/5.0'}, verify=False,
+        )
+        if resp.status_code != 200 or not resp.content:
+            return []
+        feed = feedparser.parse(resp.content)
+        results = []
+        for entry in feed.entries[:num]:
+            link = entry.get('link', '')
+            if not link:
+                continue
+            results.append({
+                'title':   entry.get('title', ''),
+                'url':     link,
+                'snippet': entry.get('summary', ''),
+                'date':    entry.get('published', ''),
+            })
+        _track(source)
+        return results
+    except Exception:
+        return []
+
+
 def serper_search(query: str, num: int = 10, source: str = 'other') -> list[dict]:
     """
     Execute a Google search via Serper.dev.
@@ -125,17 +176,32 @@ def serper_search(query: str, num: int = 10, source: str = 'other') -> list[dict
 
 def parse_result_age(date_str: str) -> int:
     """
-    Parse a Serper date string into approximate days ago.
+    Parse a Serper or Google News date string into approximate days ago.
 
-    Handles two formats:
+    Handles:
       - Relative: "2 days ago", "3 hours ago", "1 week ago"
       - Absolute: "Jan 15, 2024", "Mar 3, 2025"
+      - RFC-822 (Google News): "Thu, 16 Jul 2026 07:00:00 GMT"
 
     Returns 999 if unparseable.
     """
     if not date_str:
         return 999
     lower = date_str.lower().strip()
+
+    # --- RFC-822 (Google News RSS published date) ---
+    if ',' in date_str and 'GMT' in date_str.upper():
+        try:
+            from email.utils import parsedate_to_datetime
+            dt = parsedate_to_datetime(date_str)
+            if dt is None:
+                raise ValueError
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            delta = datetime.now(timezone.utc) - dt
+            return max(0, delta.days)
+        except Exception:
+            return 999
 
     # --- Relative format: "X hours/days/weeks/months/years ago" ---
     num_match = re.search(r'(\d+)', lower)

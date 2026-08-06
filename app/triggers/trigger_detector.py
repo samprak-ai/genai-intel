@@ -76,7 +76,7 @@ _CLOUD_ADJACENT_VENDORS = [
 # Helpers
 # ---------------------------------------------------------------------------
 
-from app.core.search import serper_search, parse_result_age
+from app.core.search import gnews_search, parse_result_age
 
 
 def _confirm_hire_with_haiku(company_name: str, title: str, snippet: str) -> Optional[bool]:
@@ -108,6 +108,20 @@ def _confirm_hire_with_haiku(company_name: str, title: str, snippet: str) -> Opt
 # ---------------------------------------------------------------------------
 # Individual detectors (each returns Optional[DetectedTrigger])
 # ---------------------------------------------------------------------------
+
+def _title_matches_company(title: str, company_name: str) -> bool:
+    """
+    True if the company name appears in the title as a whole word token
+    (word-boundary match). Avoids name-collision false positives like the
+    word "render" matching "renders" or "Renderer" for company "Render".
+    """
+    tl = title.lower()
+    for token in company_name.lower().split():
+        if not token:
+            continue
+        if re.search(rf'(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])', tl):
+            return True
+    return False
 
 def _detect_hiring_surge(company_name: str, website: str) -> Optional[DetectedTrigger]:
     """
@@ -143,7 +157,7 @@ def _detect_leadership_hire(company_name: str) -> Optional[DetectedTrigger]:
     action_terms = 'hired OR joins OR appointed OR names OR announces'
     query = f'"{company_name}" ({title_terms}) ({action_terms})'
 
-    results = serper_search(query, num=5, source='trigger_leadership')
+    results = gnews_search(query, num=5, source='trigger_leadership')
     for r in results:
         age_days = parse_result_age(r.get('date', ''))
         if age_days > 60:
@@ -152,6 +166,10 @@ def _detect_leadership_hire(company_name: str) -> Optional[DetectedTrigger]:
         title = r.get('title', '').lower()
         snippet = r.get('snippet', '').lower()
         combined = f'{title} {snippet}'
+
+        # Title/snippet must reference the company (word-boundary aware)
+        if not _title_matches_company(combined, company_name):
+            continue
 
         # Check if any leadership title appears
         matched_title = None
@@ -184,27 +202,38 @@ def _detect_leadership_hire(company_name: str) -> Optional[DetectedTrigger]:
 
 def _detect_product_launch(company_name: str, domain: str) -> Optional[DetectedTrigger]:
     """Detect major product launch or GA announcement in last 30 days."""
-    clean_domain = re.sub(r'^https?://', '', domain).rstrip('/')
     query = (
         f'"{company_name}" '
-        f'(launch OR "generally available" OR "GA" OR "announces" OR "now available") '
-        f'site:{clean_domain} OR site:techcrunch.com OR site:venturebeat.com OR site:theverge.com'
+        f'(launch OR "generally available" OR GA OR "now available")'
     )
 
-    results = serper_search(query, num=5, source='trigger_product')
+    # GNews returns items that mention the company even when the action
+    # keyword matches only the query. Require an action keyword to actually
+    # appear in the returned title to avoid false positives.
+    _action_tokens = (
+        'launch', 'launches', 'launching', 'released', 'releases',
+        'generally available', 'now available', 'available today',
+        'goes live', 'go live', 'ga of', 'announces', 'unveils',
+        'shipped', 'shipping',
+    )
+
+    results = gnews_search(query, num=5, source='trigger_product')
     for r in results:
         age_days = parse_result_age(r.get('date', ''))
         if age_days > 30:
             continue
 
-        title = r.get('title', '')
-        # Basic validation: title should mention the company
-        if company_name.lower().split()[0] not in title.lower():
+        title_lower = r.get('title', '').lower()
+        # Title must mention the company (word-boundary aware)
+        if not _title_matches_company(title_lower, company_name):
+            continue
+        # Title must also contain a launch/action signal
+        if not any(tok in title_lower for tok in _action_tokens):
             continue
 
         return DetectedTrigger(
             trigger_type='product_launch',
-            trigger_label=f'Product launch: {title[:80]}',
+            trigger_label=f'Product launch: {r.get("title", "")[:80]}',
             detected_date=datetime.now(timezone.utc),
             source_url=r.get('url'),
             signal_strength='moderate',
@@ -214,26 +243,34 @@ def _detect_product_launch(company_name: str, domain: str) -> Optional[DetectedT
 
 def _detect_partnership(company_name: str) -> Optional[DetectedTrigger]:
     """Detect partnership with cloud-adjacent vendor in last 60 days."""
-    # Batch vendor names (5 per query) to limit Brave calls
+    _action_tokens = (
+        'partnership', 'integrates', 'integration', 'integrated',
+        'announces', 'announces partnership', 'deal', 'teams up',
+        'collaborating', 'partners with',
+    )
+    # Batch vendor names (5 per query) to limit calls
     for i in range(0, len(_CLOUD_ADJACENT_VENDORS), 5):
         batch = _CLOUD_ADJACENT_VENDORS[i:i + 5]
         vendor_terms = ' OR '.join(f'"{v}"' for v in batch)
         query = f'"{company_name}" ({vendor_terms}) (partnership OR integration OR announces)'
 
-        results = serper_search(query, num=5, source='trigger_partnership')
+        results = gnews_search(query, num=5, source='trigger_partnership')
         for r in results:
             age_days = parse_result_age(r.get('date', ''))
             if age_days > 60:
                 continue
 
-            title = r.get('title', '')
-            # Basic validation
-            if company_name.lower().split()[0] not in title.lower():
+            title_lower = r.get('title', '').lower()
+            # Basic validation: title must mention the company (word-boundary aware)
+            if not _title_matches_company(title_lower, company_name):
+                continue
+            # Title must also contain a partnership/action signal
+            if not any(tok in title_lower for tok in _action_tokens):
                 continue
 
             return DetectedTrigger(
                 trigger_type='partnership',
-                trigger_label=f'Partnership: {title[:80]}',
+                trigger_label=f'Partnership: {r.get("title", "")[:80]}',
                 detected_date=datetime.now(timezone.utc),
                 source_url=r.get('url'),
                 signal_strength='moderate',
@@ -300,7 +337,7 @@ def _detect_funding(company_id: str, company_name: str) -> list:
 def _detect_press_feature(company_name: str) -> Optional[DetectedTrigger]:
     """Detect >=3 mentions in major tech press in last 14 days."""
     query = f'"{company_name}"'
-    results = serper_search(query, num=20, source='trigger_press')
+    results = gnews_search(query, num=20, source='trigger_press')
 
     recent_authority_urls = []
     for r in results:
