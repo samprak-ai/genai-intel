@@ -425,73 +425,10 @@ class Pipeline:
     # ========================================================================
 
     def _stage_store(self, results: list[dict]) -> None:
-        """Save everything to Supabase"""
+        """Save everything to Supabase. Parallelized per company."""
         self._print_stage(4, "STORAGE", "Saving to Supabase")
 
-        saved = 0
-        for result in results:
-            event = result["event"]
-            cloud_attr = result["cloud_attribution"]
-            ai_attr = result["ai_attribution"]
-
-            try:
-                # Upsert startup
-                startup = self.db.create_startup(Startup(
-                    canonical_name=event.company_name,
-                    website=event.website,
-                    industry=event.industry,
-                    description=event.description
-                ))
-
-                if not startup:
-                    continue
-
-                startup_id = startup["id"]
-
-                # Save funding event
-                self.db.create_funding_event(startup_id, event)
-
-                # Clear stale signals before writing new ones — prevents old false
-                # positives from surviving re-attribution runs where the engine now
-                # correctly discards a previously-accepted signal.
-                self.db.delete_signals_for_startup(startup_id)
-
-                # Save attribution signals
-                if cloud_attr:
-                    for signal in cloud_attr.signals:
-                        self.db.create_signal(startup_id, signal)
-
-                if ai_attr:
-                    for signal in ai_attr.signals:
-                        self.db.create_signal(startup_id, signal)
-
-                # Classify into vertical taxonomy
-                classification = None
-                try:
-                    classification = classify_company(
-                        company_name=event.company_name,
-                        domain=event.website or "",
-                        description=event.description or "",
-                        investors=event.lead_investors if event.lead_investors else None,
-                        founder_background=", ".join(event.founder_background) if event.founder_background else None,
-                        article_text=event.raw_article_text,
-                    )
-                    if classification and classification.vertical:
-                        print(f"    📊 Classified: {classification.vertical} / {classification.sub_vertical} (propensity={classification.cloud_propensity})")
-                except Exception as e:
-                    self._log_error(f"classify:{event.company_name}", str(e))
-
-                # Save attribution snapshot
-                snapshot_data = self._build_snapshot(startup_id, cloud_attr, ai_attr, classification, funding_date=event.announcement_date)
-                self.db.create_snapshot(snapshot_data)
-
-                saved += 1
-                print(f"  ✅ Saved: {event.company_name}")
-
-            except Exception as e:
-                self._log_error(f"store:{event.company_name}", str(e))
-                print(f"  ❌ Failed: {event.company_name} — {e}")
-
+        saved = self._store_all(results, save_funding=True)
         print(f"\n  ✅ Storage complete: {saved}/{len(results)} saved")
 
     def _stage_store_manual(self, results: list[dict]) -> None:
@@ -502,70 +439,105 @@ class Pipeline:
         """
         self._print_stage(4, "STORAGE", "Saving to Supabase (startup + attribution only)")
 
-        saved = 0
-        for result in results:
-            event = result["event"]
-            cloud_attr = result["cloud_attribution"]
-            ai_attr = result["ai_attribution"]
-
-            if not event.website:
-                print(f"  ⚠️  Skipping {event.company_name} — no website resolved")
-                continue
-
-            try:
-                # Upsert startup
-                startup = self.db.create_startup(Startup(
-                    canonical_name=event.company_name,
-                    website=event.website,
-                    industry=event.industry,
-                    description=event.description,
-                ))
-
-                if not startup:
-                    continue
-
-                startup_id = startup["id"]
-
-                # Clear stale signals before writing new ones
-                self.db.delete_signals_for_startup(startup_id)
-
-                # Save attribution signals
-                if cloud_attr:
-                    for signal in cloud_attr.signals:
-                        self.db.create_signal(startup_id, signal)
-
-                if ai_attr:
-                    for signal in ai_attr.signals:
-                        self.db.create_signal(startup_id, signal)
-
-                # Classify into vertical taxonomy
-                classification = None
-                try:
-                    classification = classify_company(
-                        company_name=event.company_name,
-                        domain=event.website or "",
-                        description=event.description or "",
-                        investors=event.lead_investors if event.lead_investors else None,
-                        founder_background=", ".join(event.founder_background) if event.founder_background else None,
-                        article_text=event.raw_article_text,
-                    )
-                    if classification and classification.vertical:
-                        print(f"    📊 Classified: {classification.vertical} / {classification.sub_vertical} (propensity={classification.cloud_propensity})")
-                except Exception as e:
-                    self._log_error(f"classify:{event.company_name}", str(e))
-
-                # Save attribution snapshot
-                snapshot_data = self._build_snapshot(startup_id, cloud_attr, ai_attr, classification, funding_date=event.announcement_date)
-                self.db.create_snapshot(snapshot_data)
-
-                saved += 1
-                print(f"  ✅ Saved: {event.company_name}")
-
-            except Exception as e:
-                self._log_error(f"store:{event.company_name}", str(e))
-                print(f"  ❌ Failed: {event.company_name} — {e}")
-
+        saved = self._store_all(results, save_funding=False)
         print(f"\n  ✅ Storage complete: {saved}/{len(results)} saved")
+
+    def _store_all(self, results: list[dict], save_funding: bool) -> int:
+        """Store all results, concurrent across companies."""
+        # Every worker builds its own DatabaseClient (the Supabase python client is
+        # not documented as thread-safe, so we avoid sharing one instance across threads).
+        max_workers = 1
+        try:
+            max_workers = max(1, int(os.environ.get('PIPELINE_MAX_WORKERS', '8')))
+        except ValueError:
+            max_workers = 8
+
+        if max_workers > 1 and len(results) > 1:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                futures = {
+                    pool.submit(self._store_one, res, i, save_funding): i
+                    for i, res in enumerate(results)
+                }
+                return sum(1 for f in as_completed(futures) if f.result())
+        else:
+            return sum(1 for i, res in enumerate(results) if self._store_one(res, i, save_funding))
+
+    def _store_one(self, result: dict, index: int, save_funding: bool) -> bool:
+        """Save a single company's attribution to Supabase. Returns True if saved."""
+        from app.core.database import DatabaseClient
+        db = DatabaseClient()
+        event = result["event"]
+        cloud_attr = result["cloud_attribution"]
+        ai_attr = result["ai_attribution"]
+
+        if save_funding is False and not event.website:
+            with _PRINT_LOCK:
+                print(f"  ⚠️  Skipping {event.company_name} — no website resolved")
+            return False
+
+        try:
+            # Upsert startup
+            startup = db.create_startup(Startup(
+                canonical_name=event.company_name,
+                website=event.website,
+                industry=event.industry,
+                description=event.description,
+            ))
+
+            if not startup:
+                return False
+
+            startup_id = startup["id"]
+
+            # Save funding event (full weekly run only)
+            if save_funding:
+                db.create_funding_event(startup_id, event)
+
+            # Clear stale signals before writing new ones — prevents old false
+            # positives from surviving re-attribution runs where the engine now
+            # correctly discards a previously-accepted signal.
+            db.delete_signals_for_startup(startup_id)
+
+            # Save attribution signals
+            if cloud_attr:
+                for signal in cloud_attr.signals:
+                    db.create_signal(startup_id, signal)
+
+            if ai_attr:
+                for signal in ai_attr.signals:
+                    db.create_signal(startup_id, signal)
+
+            # Classify into vertical taxonomy
+            classification = None
+            try:
+                classification = classify_company(
+                    company_name=event.company_name,
+                    domain=event.website or "",
+                    description=event.description or "",
+                    investors=event.lead_investors if event.lead_investors else None,
+                    founder_background=", ".join(event.founder_background) if event.founder_background else None,
+                    article_text=event.raw_article_text,
+                )
+                if classification and classification.vertical:
+                    with _PRINT_LOCK:
+                        print(f"    📊 Classified: {classification.vertical} / {classification.sub_vertical} (propensity={classification.cloud_propensity})")
+            except Exception as e:
+                self._log_error(f"classify:{event.company_name}", str(e))
+
+            # Save attribution snapshot
+            snapshot_data = self._build_snapshot(startup_id, cloud_attr, ai_attr, classification, funding_date=event.announcement_date)
+            db.create_snapshot(snapshot_data)
+
+            with _PRINT_LOCK:
+                print(f"  ✅ Saved: {event.company_name}")
+            return True
+
+        except Exception as e:
+            self._log_error(f"store:{event.company_name}", str(e))
+            with _PRINT_LOCK:
+                print(f"  ❌ Failed: {event.company_name} — {e}")
+            return False
 
     def _build_snapshot(
         self,
