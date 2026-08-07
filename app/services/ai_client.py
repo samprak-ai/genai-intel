@@ -19,10 +19,83 @@ Provider SDKs are imported lazily so the other provider's SDK is never required.
 """
 
 import os
+import random
+import time
 
 import httpx
 
 _DEFAULT_CLAUDE = "claude-sonnet-4-6"
+
+
+# --------------------------------------------------------------------------- #
+# Retry / backoff
+# --------------------------------------------------------------------------- #
+
+def _retry_config() -> tuple[int, float, float]:
+    """(max_attempts, base_delay_sec, multiplier) — configurable via env for ops."""
+    try:
+        max_attempts = max(1, int(os.getenv("AI_RETRY_MAX", "3")))
+    except ValueError:
+        max_attempts = 3
+    try:
+        base_delay = max(0.0, float(os.getenv("AI_RETRY_BASE", "1.0")))
+    except ValueError:
+        base_delay = 1.0
+    try:
+        multiplier = max(1.0, float(os.getenv("AI_RETRY_MULT", "2.0")))
+    except ValueError:
+        multiplier = 2.0
+    return max_attempts, base_delay, multiplier
+
+
+def _is_retryable(e: Exception, status: int = 0) -> bool:
+    """True if the exception represents a transient failure worth retrying."""
+    try:
+        import anthropic
+
+        if isinstance(e, (anthropic.APIConnectionError,
+                          anthropic.APITimeoutError,
+                          anthropic.RateLimitError,
+                          anthropic.InternalServerError)):
+            return True
+    except Exception:
+        pass
+
+    if isinstance(e, httpx.RequestError):
+        return True  # connection reset, DNS, timeout, etc.
+    if isinstance(e, httpx.HTTPStatusError):
+        return 429 <= status <= 599
+
+    # Non-SDK status errors with a retryable status code.
+    return 429 <= status <= 599
+
+
+def _with_retries(fn, *args):
+    """
+    Run `fn(*args)` with exponential backoff + jitter on transient failures.
+
+    Raises the final exception if all attempts fail. Returns normal result
+    otherwise. Status codes 429 and 5xx are retried; errors retried only when
+    they map to connectivity / rate-limit / server faults.
+    """
+    max_attempts, base_delay, multiplier = _retry_config()
+    attempt = 0
+    last_exc = None
+    while attempt < max_attempts:
+        attempt += 1
+        try:
+            return fn(*args)
+        except Exception as e:
+            status = getattr(e, "status_code", 0) or getattr(getattr(e, "response", None), "status_code", 0)
+            if attempt >= max_attempts or not _is_retryable(e, status):
+                raise
+            last_exc = e
+            # Exponential backoff with full jitter: delay grows but is randomized
+            # to avoid a thundering herd when many workers retry together.
+            jitter = random.uniform(0, base_delay)
+            sleep_for = min((base_delay * (multiplier ** (attempt - 1))) + jitter, 30)
+            time.sleep(sleep_for)
+    raise last_exc
 
 
 # ---------------------------------------------------------------------------
@@ -82,23 +155,27 @@ def _call_anthropic_usage(model: str, system, user: str, max_tokens: int):
         raise RuntimeError("ANTHROPIC_API_KEY not configured")
     client = _anthropic_client()
 
-    kwargs = {}
-    if system:
-        kwargs["system"] = system  # pass blocks verbatim to preserve prompt caching
-
-    message = client.messages.create(
-        model=_anthropic_model(model),
-        max_tokens=max_tokens,
-        temperature=0,
-        messages=[{"role": "user", "content": user}],
-        **kwargs,
-    )
+    message = _with_retries(_anthropic_create, client, model, system, user, max_tokens)
     text = message.content[0].text.strip() if message.content else ""
     usage = {
         "input_tokens": getattr(message.usage, "input_tokens", 0),
         "output_tokens": getattr(message.usage, "output_tokens", 0),
     }
     return text, usage
+
+
+def _anthropic_create(client, model: str, system, user: str, max_tokens: int):
+    """Single Anthropic request — isolated so _with_retries can re-invoke it."""
+    kwargs = {}
+    if system:
+        kwargs["system"] = system  # pass blocks verbatim to preserve prompt caching
+    return client.messages.create(
+        model=_anthropic_model(model),
+        max_tokens=max_tokens,
+        temperature=0,
+        messages=[{"role": "user", "content": user}],
+        **kwargs,
+    )
 
 
 def _anthropic_model(model: str) -> str:
@@ -166,12 +243,7 @@ def _call_deepseek(model: str, system: str, user: str, max_tokens: int):
         "messages": messages,
     }
 
-    resp = httpx.post(
-        f"{base_url}/v1/chat/completions",
-        headers={"Authorization": f"Bearer {key}"},
-        json=payload,
-        timeout=120,
-    )
+    resp = _with_retries(_deepseek_post, base_url, key, payload)
     resp.raise_for_status()
     data = resp.json()
 
@@ -182,3 +254,13 @@ def _call_deepseek(model: str, system: str, user: str, max_tokens: int):
         "input_tokens": usage.get("prompt_tokens", 0),
         "output_tokens": usage.get("completion_tokens", 0),
     }
+
+
+def _deepseek_post(base_url: str, key: str, payload: dict):
+    """Single DeepSeek request — isolated so _with_retries can re-invoke it."""
+    return httpx.post(
+        f"{base_url}/v1/chat/completions",
+        headers={"Authorization": f"Bearer {key}"},
+        json=payload,
+        timeout=120,
+    )
