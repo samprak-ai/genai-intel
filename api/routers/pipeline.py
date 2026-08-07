@@ -24,6 +24,17 @@ _active_run: dict = {}
 _last_error: dict = {}
 
 
+def _log_post_step(p, step: str, message: str) -> None:
+    """Persist a failed post-run step as a warn pipeline_log, best-effort."""
+    try:
+        run_id = getattr(p, "run", None) and getattr(p.run, "id", None)
+        db = getattr(p, "db", None)
+        if db and run_id:
+            db.log(run_id=run_id, stage="storage", level="warn", message=message, detail={"step": step})
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Request schemas
 # ---------------------------------------------------------------------------
@@ -143,12 +154,15 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
 
         # Recalculate engagement tiers for ALL companies
         # (days_since_funding changes daily, so tiers may shift)
+        # Recalculate engagement tiers for ALL companies
+        # (days_since_funding changes daily, so tiers may shift)
         if not dry_run:
             try:
                 from app.priority import recalculate_all_priorities
                 recalculate_all_priorities()
             except Exception as e:
                 print(f"  ⚠️  Engagement tier recalculation failed: {e}")
+                _log_post_step(p, "reprioritization", f"Engagement tier recalculation failed: {e}")
 
             # Run trigger detection on Tier 1+2 companies
             try:
@@ -156,6 +170,7 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
                 run_trigger_detection()
             except Exception as e:
                 print(f"  ⚠️  Trigger detection failed: {e}")
+                _log_post_step(p, "triggers", f"Trigger detection failed: {e}")
 
             # Generate/refresh outreach intelligence for Tier 1+2 companies
             try:
@@ -163,6 +178,7 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
                 run_outreach_generation()
             except Exception as e:
                 print(f"  ⚠️  Outreach intelligence generation failed: {e}")
+                _log_post_step(p, "outreach", f"Outreach intelligence generation failed: {e}")
 
             # Flush search API usage counters to DB
             try:
@@ -170,6 +186,7 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
                 flush_usage_to_db()
             except Exception as e:
                 print(f"  ⚠️  Search usage flush failed: {e}")
+                _log_post_step(p, "usage", f"Search usage flush failed: {e}")
     except Exception as e:
         # Surface the crash via /api/pipeline/status
         # instead of letting Starlette's BackgroundTask runner swallow it silently.
@@ -177,5 +194,18 @@ def _run_pipeline_background(days_back: int, limit: Optional[int], dry_run: bool
         _last_error["traceback"] = traceback.format_exc()
         _last_error["at"] = datetime.now().isoformat()
         print(f"  ❌ Pipeline background run crashed: {e}\n{traceback.format_exc()}")
+
+        # Persist the whole-run crash to the DB so it survives a redeploy
+        # (in-process _last_error alone is lost on restart).
+        try:
+            from app.core.database import DatabaseClient
+            db = DatabaseClient()
+            db.persist_crash(
+                error=f"{type(e).__name__}: {e}",
+                traceback=traceback.format_exc(),
+                context="pipeline",
+            )
+        except Exception as db_e:
+            print(f"  ⚠️  Failed to persist crash to DB: {db_e}")
     finally:
         _active_run.clear()

@@ -414,6 +414,60 @@ class DatabaseClient:
         }
         self.client.table('pipeline_logs').insert(data).execute()
 
+    def persist_crash(self, error: str, traceback: str, context: str = "pipeline") -> None:
+        """
+        Persist a whole-run crash to `weekly_runs` + a `pipeline_logs` error row.
+
+        Used by the background-task wrapper for crashes that escape a single
+        pipeline stage (e.g. an unexpected exception from run_weekly, or a
+        failure in a post-run step). Unlike `update_weekly_run` this is safe to
+        call even when no WeeklyRun object / run.id is available — it upserts
+        today's run row directly so the failure survives redeploys instead of
+        living only in process memory.
+        """
+        from datetime import date, datetime
+
+        now = datetime.utcnow()
+        today = date.today().isoformat()
+        try:
+            existing = self.client.table('weekly_runs') \
+                .select('id') \
+                .eq('run_date', today) \
+                .limit(1) \
+                .execute()
+            run_id = existing.data[0]['id'] if existing.data else None
+
+            if run_id:
+                # Update the existing row — preserve recorded metrics, just mark failed.
+                self.client.table('weekly_runs') \
+                    .update({
+                        'status': 'failed',
+                        'errors_count': 1,
+                        'error_log': {"crash": {"error": error, "traceback": traceback, "at": now.isoformat()}},
+                        'completed_at': now.isoformat(),
+                    }) \
+                    .eq('id', run_id) \
+                    .execute()
+            else:
+                # No run row yet (crashed before create_weekly_run) — insert one.
+                res = self.client.table('weekly_runs') \
+                    .insert({
+                        'run_date': today,
+                        'status': 'failed',
+                        'errors_count': 1,
+                        'error_log': {"crash": {"error": error, "traceback": traceback, "at": now.isoformat()}},
+                        'started_at': now.isoformat(),
+                        'completed_at': now.isoformat(),
+                    }) \
+                    .execute()
+                run_id = res.data[0]['id'] if res.data else None
+
+            if run_id:
+                self.log(run_id=run_id, stage='storage', level='error',
+                         message=f"Pipeline crashed: {error}", detail={"traceback": traceback})
+        except Exception as e:
+            print(f"  ⚠️  Failed to persist crash to DB: {e}")
+
     def get_logs_for_run(
         self,
         run_id: str,
