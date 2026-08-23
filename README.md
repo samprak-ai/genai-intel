@@ -67,7 +67,7 @@ The core intelligence layer. Uses a 4-tier signal system with weighted confidenc
 | Tier 2 | Strong inference | 0.6 | Job postings, integration/partners pages, technical docs, trust/security/privacy pages, HTTP headers |
 | Tier 3 | Supporting | 0.3 | IP/ASN ranges, tech blog posts, homepage keyword mentions |
 | Tier 4a | Perplexity Sonar | mapped | Live web search fallback when confidence < 60% after Tiers 1–3 |
-| Tier 4b | Claude Haiku | mapped | Reads pre-fetched homepage + article text as final fallback |
+| Tier 4b | LLM (DeepSeek) | mapped | Reads pre-fetched homepage + article text as final fallback |
 
 ### Confidence Formula
 
@@ -102,7 +102,7 @@ WEAK · MODERATE · STRONG — based on raw signal score thresholds. Displayed a
 | Layer | Tools |
 |---|---|
 | API / Backend | FastAPI (Python) |
-| AI — extraction & fallback | Claude API (Anthropic) — Claude Haiku |
+| AI — extraction & fallback | DeepSeek API |
 | AI — live web search | Perplexity Sonar |
 | Search | Google News RSS (free)
 | Database | Supabase (PostgreSQL) |
@@ -160,7 +160,7 @@ pip install -r requirements.txt
 
 # Configure environment variables
 cp .env.example .env
-# Required: ANTHROPIC_API_KEY or DEEPSEEK_API_KEY, SUPABASE_URL, SUPABASE_KEY
+# Required: DEEPSEEK_API_KEY, SUPABASE_URL, SUPABASE_KEY
 # Optional: PERPLEXITY_API_KEY (Tier 4a fallback), CRON_SECRET, DASHBOARD_SECRET
 
 # Run the pipeline

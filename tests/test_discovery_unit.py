@@ -8,8 +8,8 @@ Tests cover the pure-logic methods that need no network or LLM:
   - _extract_company_hint (regex company name extraction)
   - _parse_entry_date    (feedparser date parsing)
 
-FundingDiscovery.__init__ calls anthropic.Anthropic() unconditionally, so
-we patch it at import time via mocker to avoid requiring an API key.
+FundingDiscovery routes LLM calls through app.services.ai_client, so no API
+key is needed for unit tests.
 """
 
 import pytest
@@ -20,13 +20,13 @@ from tests.conftest import make_funding_event
 
 
 # ============================================================================
-# Fixture: FundingDiscovery with mocked Anthropic client
+# Fixture: FundingDiscovery (network-free)
 # ============================================================================
 
 @pytest.fixture
 def discovery(mocker):
-    """FundingDiscovery with Anthropic client mocked out."""
-    mocker.patch("anthropic.Anthropic", return_value=MagicMock())
+    """FundingDiscovery — no API key set, so AI extraction is disabled."""
+    mocker.patch.dict("os.environ", {"DEEPSEEK_API_KEY": ""}, clear=False)
     from app.discovery.funding_discovery import FundingDiscovery
     return FundingDiscovery()
 

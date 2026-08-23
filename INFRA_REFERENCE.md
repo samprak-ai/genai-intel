@@ -11,7 +11,7 @@
 | **API** | FastAPI (Python 3.11+) | Railway (`web-production-f93a5.up.railway.app`) |
 | **Database** | PostgreSQL 15 via Supabase | Supabase (managed) |
 | **Dashboard** | Next.js 16 + React 19 + Tailwind 4 | Vercel |
-| **LLM** | Anthropic Claude (Haiku for cheap tasks) | Anthropic API |
+| **LLM** | DeepSeek (v4-pro) via ai_client | DeepSeek API |
 | **Search** | Google News RSS + Perplexity Sonar | External APIs |
 | **Cron** | cron-job.org → POST to API endpoint | External |
 
@@ -430,19 +430,20 @@ function KpiCard({ label, value, sub }: { label: string; value: string; sub?: st
 
 ## 5. LLM Integration Patterns
 
-### Anthropic Claude (Haiku)
+### DeepSeek (OpenAI-compatible)
+
+All LLM calls route through `app/services/ai_client.py` (`complete()` /
+`complete_with_usage()` — enforced by `scripts/check_ai_client_wiring.py`):
 
 ```python
-import anthropic
+from app.services.ai_client import complete
 
-client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
-resp = client.messages.create(
-    model='claude-3-haiku-20240307',
-    max_tokens=600,
-    messages=[{'role': 'user', 'content': prompt}],
-)
-raw = resp.content[0].text.strip()
+raw = complete("claude-haiku-4-5-20251001", None, prompt, max_tokens=600)
+# Semantic labels are mapped to the configured DEEPSEEK_MODEL automatically.
 ```
+
+Transient failures are retried with exponential backoff inside the client
+(AI_RETRY_MAX / AI_RETRY_BASE / AI_RETRY_MULT env vars).
 
 **JSON extraction from LLM response** (LLMs often append prose):
 ```python
@@ -511,7 +512,8 @@ citations = data.get('citations', [])
 
 | Variable | Purpose |
 |----------|---------|
-| `ANTHROPIC_API_KEY` | Claude API access |
+| `DEEPSEEK_API_KEY` | DeepSeek API access |
+| `DEEPSEEK_MODEL` | DeepSeek model id (default: deepseek-v4-pro) |
 | `PERPLEXITY_API_KEY` | Perplexity Sonar (optional — graceful no-op if absent) |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_KEY` | Supabase anon API key |
@@ -535,7 +537,6 @@ pydantic>=2.0.0
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 supabase>=2.3.0
-anthropic>=0.40.0
 feedparser>=6.0.10
 beautifulsoup4>=4.12.0
 lxml>=5.1.0
@@ -608,7 +609,7 @@ if __name__ == '__main__':
 
 3. **Railway auto-deploy lag**: If a cron job fires right after a push, it may run the old code. Sometimes needs manual redeploy from Railway dashboard.
 
-4. **`claude-3-5-haiku-latest` is deprecated**. Use `claude-3-haiku-20240307` (or check what models are available on your API key).
+4. **Semantic model labels are legacy**. Call sites pass `claude-*` labels from the original Claude implementation; `_deepseek_model()` in ai_client maps them all to the configured `DEEPSEEK_MODEL`. Don't add new `claude-*` labels — pass a real DeepSeek id or empty string.
 
 5. **`.lstrip()` in Python strips characters, not substrings**: `"https://example.com".lstrip("https://")` strips all matching characters. Use `re.sub(r'^https?://', '', url)` instead.
 

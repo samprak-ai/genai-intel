@@ -6,8 +6,8 @@ Tests cover the pure-logic methods:
   - _is_valid_domain    (domain format + reject-list validation)
   - _dns_guessing       (candidate generation + DNS testing — DNS mocked)
 
-DomainResolver.__init__ calls anthropic.Anthropic() unconditionally, so
-we patch it via mocker. The _test_domain_exists method is mocked in DNS tests
+DomainResolver routes LLM calls through app.services.ai_client, so no API key
+is needed. The _test_domain_exists method is mocked in DNS tests
 to keep them fast and network-free.
 """
 
@@ -16,13 +16,13 @@ from unittest.mock import MagicMock
 
 
 # ============================================================================
-# Fixture: DomainResolver with mocked Anthropic client
+# Fixture: DomainResolver (network-free)
 # ============================================================================
 
 @pytest.fixture
 def resolver(mocker):
-    """DomainResolver with Anthropic client mocked out."""
-    mocker.patch("anthropic.Anthropic", return_value=MagicMock())
+    """DomainResolver — no API key set, so AI fallback is disabled."""
+    mocker.patch.dict("os.environ", {"DEEPSEEK_API_KEY": ""}, clear=False)
     from app.resolution.domain_resolver import DomainResolver
     return DomainResolver()
 

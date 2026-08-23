@@ -239,7 +239,7 @@ pip install -r requirements.txt
 
 # 2. Set up environment
 cp .env.template .env
-# Edit .env and add your ANTHROPIC_API_KEY
+# Edit .env and add your DEEPSEEK_API_KEY
 
 # 3. Run test
 python tests/test_discovery.py

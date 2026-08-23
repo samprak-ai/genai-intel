@@ -629,7 +629,7 @@ class AttributionEngine:
     TIMEOUT = 6
 
     def __init__(self):
-        self.anthropic_client = True if is_configured() else None
+        self.ai_ready = True if is_configured() else None
         self.subprocessors_parser = SubprocessorsParser()
 
     # Confidence threshold below which we invoke the LLM fallback (Tier 4)
@@ -834,7 +834,7 @@ class AttributionEngine:
                     print(f"    ℹ️  Perplexity found no additional signals")
 
             # ── Tier 4b: Claude Haiku — reads pre-fetched homepage + article ─
-            if (cloud_needs_fallback or ai_needs_fallback) and self.anthropic_client:
+            if (cloud_needs_fallback or ai_needs_fallback) and self.ai_ready:
                 needed_b = []
                 if cloud_needs_fallback:
                     needed_b.append('cloud')
@@ -1841,7 +1841,7 @@ class AttributionEngine:
             pass
 
         # Step 3.5: Batch LLM relevance filter — discard signals about unrelated entities
-        if signals and self.anthropic_client:
+        if signals and self.ai_ready:
             signals = self._filter_signals_by_relevance(signals, company_name, website)
         return signals
 
@@ -3755,7 +3755,7 @@ JSON:"""
 
         Returns list of AttributionSignal objects (may be empty).
         """
-        if not self.anthropic_client:
+        if not self.ai_ready:
             return []
 
         # ── Fetch homepage text (lightweight — strip scripts/styles) ──────────

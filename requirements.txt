@@ -13,7 +13,6 @@ apscheduler>=3.10.0
 supabase>=2.3.0
 
 # AI
-anthropic>=0.40.0
 httpx>=0.24.0
 
 # Discovery Module

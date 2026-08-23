@@ -1,5 +1,5 @@
 """
-Integration tests — require live network and/or ANTHROPIC_API_KEY.
+Integration tests — require live network and/or DEEPSEEK_API_KEY.
 
 These tests are excluded from the default `pytest` run.
 Run them explicitly with:  pytest -m integration
@@ -83,19 +83,19 @@ def test_full_attribution_notion():
 
 
 # ============================================================================
-# Discovery — hits RSS feeds and Anthropic API
+# Discovery — hits RSS feeds and the DeepSeek API
 # ============================================================================
 
 def test_discover_recent_funding():
     """
     Tests the full funding discovery pipeline against live RSS feeds.
-    Requires ANTHROPIC_API_KEY to be set.
+    Requires DEEPSEEK_API_KEY to be set.
 
     Verifies structural correctness of returned events — specific companies
     vary week to week.
     """
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        pytest.skip("ANTHROPIC_API_KEY not set — skipping live discovery test")
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        pytest.skip("DEEPSEEK_API_KEY not set — skipping live discovery test")
 
     from app.discovery.funding_discovery import FundingDiscovery
 

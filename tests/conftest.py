@@ -65,16 +65,6 @@ def make_provider_entry(name: str, score: float = 1.0) -> ProviderEntry:
 # ============================================================================
 
 @pytest.fixture
-def mock_anthropic_client():
-    """A MagicMock for anthropic.Anthropic with a default no-op response."""
-    client = MagicMock()
-    response = MagicMock()
-    response.content = [MagicMock(text='{"providers": []}')]
-    client.messages.create.return_value = response
-    return client
-
-
-@pytest.fixture
 def aws_signal():
     return make_signal("AWS", ProviderType.CLOUD, "dns_cname", SignalStrength.STRONG, 1.0)
 
@@ -98,10 +88,10 @@ def openai_signal():
 def engine(monkeypatch):
     """
     AttributionEngine with no API key — LLM fallback is disabled.
-    Safe to use in unit tests: no network, no Anthropic calls.
+    Safe to use in unit tests: no network, no LLM calls.
     """
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     from app.attribution.attribution_engine import AttributionEngine
     e = AttributionEngine()
-    assert e.anthropic_client is None, "Expected no Anthropic client in unit tests"
+    assert e.ai_ready is None, "Expected no AI client in unit tests"
     return e

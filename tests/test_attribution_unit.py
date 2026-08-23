@@ -10,7 +10,7 @@ Tests cover the pure-logic methods that need no network:
   - attribute_startup fast-paths (override and N/A bypass _gather_all_signals)
 
 The `engine` fixture (from conftest.py) instantiates AttributionEngine with
-ANTHROPIC_API_KEY removed from env, so anthropic_client is None and the LLM
+DEEPSEEK_API_KEY removed from env, so ai_ready is None and the LLM
 fallback is disabled — no network calls are made.
 """
 
@@ -326,8 +326,8 @@ class TestAttributeStartupFastPaths:
         assert ai_attr is None or not ai_attr.is_not_applicable
 
     def test_llm_not_called_when_no_client(self, engine, mocker):
-        """With no Anthropic client, LLM fallback should never be triggered."""
-        assert engine.anthropic_client is None
+        """With no AI client configured, LLM fallback should never be triggered."""
+        assert engine.ai_ready is None
         # Return a STRONG signal so confidence > threshold — but even if below,
         # no client means _llm_attribution_fallback is a no-op
         strong_signal = make_signal("AWS", weight=1.0)

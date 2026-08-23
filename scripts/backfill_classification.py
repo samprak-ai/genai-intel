@@ -152,7 +152,7 @@ def backfill(limit: int = 0, dry_run: bool = False):
             print(f"  ❌ {name}: {e}")
             failed += 1
 
-        # Rate limit: avoid hammering Anthropic API
+        # Rate limit: avoid hammering the DeepSeek API
         time.sleep(0.3)
 
     print(f"\n{'='*60}")

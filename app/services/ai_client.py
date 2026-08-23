@@ -1,21 +1,18 @@
 """
-Unified AI provider client (DeepSeek migration playbook).
+Unified AI client — DeepSeek (OpenAI-compatible endpoint).
 
-Every LLM call routes through `complete()` / `complete_with_usage()`, which
-dispatches on AI_PROVIDER ("anthropic" default | "deepseek").  Call sites pass a
-SEMANTIC model label (e.g. "claude-sonnet-4-6") and each provider maps it to its
-own model string.
+Every LLM call in the codebase routes through `complete()` /
+`complete_with_usage()` (enforced by scripts/check_ai_client_wiring.py).
+Call sites pass a SEMANTIC model label (e.g. "claude-sonnet-4-6", a leftover
+of the original Claude implementation); every label maps to the configured
+DeepSeek model via _deepseek_model().
 
-Three traps (all hit in the source migration, documented in the playbook):
+Two traps (hit during the DeepSeek migration, documented in the playbook):
   1. DeepSeek v4-pro is a thinking model by default: reasoning goes to
      `reasoning_content` and `content` comes back EMPTY.  We always send
      `thinking: {"type": "disabled"}` or the JSON parser breaks.
-  2. Model strings are provider-specific — map every `claude-*` label to the
-     configured DeepSeek model, else DeepSeek rejects the id with a 400.
-  3. Anthropic `system` blocks (list w/ cache_control) vs DeepSeek single
-     string — flatten for DeepSeek, pass verbatim for Claude (keeps caching).
-
-Provider SDKs are imported lazily so the other provider's SDK is never required.
+  2. Model strings are provider-specific — map every label to the configured
+     DeepSeek model, else DeepSeek rejects unknown ids with a 400.
 """
 
 import os
@@ -23,8 +20,6 @@ import random
 import time
 
 import httpx
-
-_DEFAULT_CLAUDE = "claude-sonnet-4-6"
 
 
 # --------------------------------------------------------------------------- #
@@ -50,23 +45,9 @@ def _retry_config() -> tuple[int, float, float]:
 
 def _is_retryable(e: Exception, status: int = 0) -> bool:
     """True if the exception represents a transient failure worth retrying."""
-    try:
-        import anthropic
-
-        if isinstance(e, (anthropic.APIConnectionError,
-                          anthropic.APITimeoutError,
-                          anthropic.RateLimitError,
-                          anthropic.InternalServerError)):
-            return True
-    except Exception:
-        pass
-
     if isinstance(e, httpx.RequestError):
         return True  # connection reset, DNS, timeout, etc.
-    if isinstance(e, httpx.HTTPStatusError):
-        return 429 <= status <= 599
-
-    # Non-SDK status errors with a retryable status code.
+    # HTTPStatusError and non-SDK errors: retry rate limits + server faults only.
     return 429 <= status <= 599
 
 
@@ -102,15 +83,9 @@ def _with_retries(fn, *args):
 # Provider selection
 # ---------------------------------------------------------------------------
 
-def provider() -> str:
-    return (os.getenv("AI_PROVIDER") or "anthropic").lower().replace(" ", "")
-
-
 def is_configured() -> bool:
-    """True if an API key exists for the active provider."""
-    if provider() == "deepseek":
-        return bool(os.getenv("DEEPSEEK_API_KEY"))
-    return bool(os.getenv("ANTHROPIC_API_KEY"))
+    """True if DEEPSEEK_API_KEY exists."""
+    return bool(os.getenv("DEEPSEEK_API_KEY"))
 
 
 # --------------------------------------------------------------------------- #
@@ -118,71 +93,15 @@ def is_configured() -> bool:
 # --------------------------------------------------------------------------- #
 
 def complete(model: str, system, user: str, max_tokens: int = 1024) -> str:
-    """Complete a single-turn call. `system` may be a string or an Anthropic
-    blocks list; the client normalizes it per provider."""
-    if provider() == "deepseek":
-        return complete_deepseek(model, _flatten_system(system), user, max_tokens)
-    return _call_anthropic(model, system, user, max_tokens)
+    """Complete a single-turn call. `system` may be a string or a blocks list;
+    it is normalized to a single string for the OpenAI-compatible endpoint."""
+    return complete_deepseek(model, _flatten_system(system), user, max_tokens)
 
 
 def complete_with_usage(model: str, system, user: str, max_tokens: int = 1024):
     """Same as complete(), but returns (text, usage_dict) for cost reporting."""
-    if provider() == "deepseek":
-        text, usage = _call_deepseek(model, _flatten_system(system), user, max_tokens)
-        return text, usage
-    return _call_anthropic_usage(model, system, user, max_tokens)
-
-
-# --------------------------------------------------------------------------- #
-# Anthropic backend
-# --------------------------------------------------------------------------- #
-
-def _call_anthropic(model: str, system, user: str, max_tokens: int) -> str:
-    text, _ = _call_anthropic_usage(model, system, user, max_tokens)
-    return text
-
-
-def _anthropic_client():
-    import anthropic
-    key = os.getenv("ANTHROPIC_API_KEY")
-    if not key:
-        raise RuntimeError("ANTHROPIC_API_KEY not configured")
-    return anthropic.Anthropic(api_key=key)
-
-
-def _call_anthropic_usage(model: str, system, user: str, max_tokens: int):
-    if not is_configured():
-        raise RuntimeError("ANTHROPIC_API_KEY not configured")
-    client = _anthropic_client()
-
-    message = _with_retries(_anthropic_create, client, model, system, user, max_tokens)
-    text = message.content[0].text.strip() if message.content else ""
-    usage = {
-        "input_tokens": getattr(message.usage, "input_tokens", 0),
-        "output_tokens": getattr(message.usage, "output_tokens", 0),
-    }
+    text, usage = _call_deepseek(model, _flatten_system(system), user, max_tokens)
     return text, usage
-
-
-def _anthropic_create(client, model: str, system, user: str, max_tokens: int):
-    """Single Anthropic request — isolated so _with_retries can re-invoke it."""
-    kwargs = {}
-    if system:
-        kwargs["system"] = system  # pass blocks verbatim to preserve prompt caching
-    return client.messages.create(
-        model=_anthropic_model(model),
-        max_tokens=max_tokens,
-        temperature=0,
-        messages=[{"role": "user", "content": user}],
-        **kwargs,
-    )
-
-
-def _anthropic_model(model: str) -> str:
-    """Anthropic model labels are already valid ids; pass through."""
-    if model and not model.startswith("claude"):
-        return model
-    return model or _DEFAULT_CLAUDE
 
 
 # --------------------------------------------------------------------------- #
@@ -195,16 +114,16 @@ def complete_deepseek(model: str, system: str, user: str, max_tokens: int) -> st
 
 
 def _deepseek_model(model: str) -> str:
-    """DeepSeek rejects `claude-*` ids. Any non-claude label is passed through;
-    claude labels (and empty) map to the configured DeepSeek model."""
+    """DeepSeek rejects unknown ids. Any explicitly non-claude label is passed
+    through (allows pinning a specific deepseek id per call site); claude labels
+    (and empty) map to the configured DeepSeek model."""
     if model and not model.startswith("claude"):
         return model
     return os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
 
 
 def _flatten_system(system) -> str:
-    """Normalize an Anthropic system blocks list (or a plain string) to a single
-    string for the OpenAI-compatible endpoint."""
+    """Normalize a legacy blocks list (or a plain string) to a single string."""
     if system is None:
         return ""
     if isinstance(system, str):
@@ -225,7 +144,7 @@ def _flatten_system(system) -> str:
 def _call_deepseek(model: str, system: str, user: str, max_tokens: int):
     key = os.getenv("DEEPSEEK_API_KEY")
     if not key:
-        raise RuntimeError("DEEPSEEK_API_KEY not configured for AI_PROVIDER=deepseek")
+        raise RuntimeError("DEEPSEEK_API_KEY not configured")
     base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
 
     messages = []

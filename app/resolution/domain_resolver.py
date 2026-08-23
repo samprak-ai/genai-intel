@@ -56,8 +56,7 @@ class DomainResolver:
     STARTUP_PREFIXES = ('try', 'get', 'use', 'go', 'meet', 'join', 'run', 'with')
 
     def __init__(self):
-        # No Anthropic client — all LLM calls route through app.services.ai_client
-        # (provider-agnostic via AI_PROVIDER).
+        # No client state — all LLM calls route through app.services.ai_client.
         
         # Domains to reject
         self.reject_patterns = [

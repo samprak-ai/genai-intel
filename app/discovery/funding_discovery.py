@@ -15,7 +15,6 @@ import time
 from datetime import datetime, timedelta
 from typing import List, Optional
 from bs4 import BeautifulSoup
-import anthropic
 import httpx
 import os
 from app.services.ai_client import complete, is_configured
@@ -33,7 +32,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 class FundingDiscovery:
 
     def __init__(self):
-        self.anthropic_client = True if is_configured() else None
+        self.ai_ready = True if is_configured() else None
 
     def discover_recent_funding(self, days_back: int = 7, limit: Optional[int] = None) -> List[FundingEvent]:
         print(f"\n🔍 Discovering funding events from last {days_back} days...")
@@ -74,7 +73,7 @@ class FundingDiscovery:
             else:
                 print(f"    ⚠️  Skipped (not a funding announcement)")
             # Issue 3: Proactive rate limit throttle — stay under 50 req/min
-            if self.anthropic_client:
+            if self.ai_ready:
                 time.sleep(1.2)
 
         # Post-extraction dedup: catch cases where two articles about the same
@@ -446,8 +445,10 @@ Return ONLY valid JSON, no explanation."""
             )
         except json.JSONDecodeError:
             return None
-        except (anthropic.RateLimitError, httpx.HTTPStatusError):
+        except (httpx.HTTPStatusError, httpx.RequestError):
             # Issue 3: Handle rate limits explicitly — wait and retry once
+            # (transient LLM errors are already retried with backoff inside
+            # ai_client; this catches anything that still escapes).
             print(f"    ⚠️  Rate limit hit — waiting 60s then retrying...")
             time.sleep(60)
             try:

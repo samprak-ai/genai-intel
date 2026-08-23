@@ -2,8 +2,9 @@
 Deterministic guard for the provider switch (DeepSeek migration playbook §4).
 
 Ensures every migrated LLM call site routes through app.services.ai_client, so
-AI_PROVIDER can never be silently ignored. The two exempt services (classifier,
-domain_resolver) must keep calling Anthropic DIRECTLY, for the reasons below.
+the DeepSeek client can never be silently bypassed. No service may call an LLM
+SDK directly; there is no second provider anymore (Anthropic support was
+removed after the migration completed).
 
 Usage:
     python scripts/check_ai_client_wiring.py
@@ -27,9 +28,9 @@ MIGRATED = [
     "app/resolution/domain_resolver.py",
 ]
 
-# Exempt by design — must STILL call the Anthropic SDK directly, must NOT be
-# special-cased inside the ai_client.  Currently none; all services now route
-# through app.services.ai_client.  If one is ever exempted again it goes here.
+# Exempt by design — must call an LLM SDK directly, must NOT be special-cased
+# inside the ai_client.  Currently none; all services route through
+# app.services.ai_client.
 # (Historic: classifier was exempt as a cheap decision-loop classifier, and
 # domain_resolver was exempt while it used the Anthropic `web_search` tool —
 # that tool has no DeepSeek equivalent, so resolution was rewritten to search
@@ -49,13 +50,15 @@ def collect_problems() -> list[str]:
     for label, needle, msg in [
         ("complete", "def complete(", "missing `def complete(`"),
         ("complete_with_usage", "def complete_with_usage(", "missing `def complete_with_usage(`"),
-        ("both providers", "deepseek" in client and "anthropic" in client,
-         "must reference both 'deepseek' and 'anthropic'"),
+        ("deepseek backend", "deepseek" in client, "must reference 'deepseek'"),
+        ("no anthropic backend", "anthropic.Anthropic(" not in client,
+         "must NOT construct an Anthropic client (provider removed)"),
         ("thinking disabled", '"type": "disabled"', "missing DeepSeek thinking:disabled guard"),
         ("_deepseek_model", "def _deepseek_model(", "missing `_deepseek_model(` converter"),
         ("_flatten_system", "def _flatten_system(", "missing `_flatten_system(`"),
     ]:
-        if (needle in client if isinstance(needle, str) else needle) is False:
+        ok = needle if isinstance(needle, bool) else (needle in client)
+        if not ok:
             problems.append(f"app/services/ai_client.py: {label}: {msg}")
 
     # -- L31-style: every migrated module routes through the client ---------
@@ -68,18 +71,11 @@ def collect_problems() -> list[str]:
         if "messages.create(" in src:
             problems.append(f"{rel}: calls messages.create directly — must route through ai_client.complete")
 
-    # -- L32-style: exempt services stay pinned to Anthropic ----------------
-    for rel, keyword in EXEMPT.items():
+    # -- L32-style: exempt services bypass the client by design -------------
+    for rel in EXEMPT:
         src = read(rel)
-        if "anthropic.Anthropic(" not in src:
-            problems.append(f"{rel}: exempt service must call the Anthropic SDK directly")
         if "app.services.ai_client" in src:
             problems.append(f"{rel}: exempt service must NOT route through ai_client")
-    for rel, keyword in EXEMPT.items():
-        if keyword in client:
-            problems.append(
-                f"app/services/ai_client.py: must not special-case '{keyword}' "
-                f"(exempt-service backdoor)")
 
     return problems
 
@@ -92,7 +88,7 @@ def main() -> int:
             print(f"  - {p}")
         return 1
     print("selfcheck passed: every migrated call site routes through ai_client; "
-          "exempt services pinned to Anthropic.")
+          "no direct SDK calls.")
     return 0
 
 

@@ -7,8 +7,7 @@ CLI), then synthesizes a cited answer with Claude, grounded ONLY in what was ret
 Prototype note: this shells out to the local `gbrain` CLI, so it works when the FastAPI
 backend runs on the machine that holds the brain (local dev, or a host with gbrain + the
 brain). For deployed use the brain must be hosted (gbrain --supabase) and reachable here.
-Requires env: an AI provider key (ANTHROPIC_API_KEY or DEEPSEEK_API_KEY per
-AI_PROVIDER), OPENAI_API_KEY (gbrain embeddings), and gbrain on PATH.
+Requires env: DEEPSEEK_API_KEY, OPENAI_API_KEY (gbrain embeddings), and gbrain on PATH.
 """
 
 import os
